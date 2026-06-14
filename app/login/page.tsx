@@ -32,7 +32,7 @@ function LoginForm() {
         setMessage({ text: error.message, type: 'error' });
         setLoading(false);
       } else {
-        const next = searchParams.get('next') ?? '/';
+        const next = searchParams.get('next') ?? '/app';
         router.push(next);
         router.refresh();
       }

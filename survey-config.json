@@ -1,0 +1,58 @@
+{
+  "respondentProfiles": [
+    {
+      "name": "Farmer",
+      "percentage": 50,
+      "description": "A small-scale farmer who grows and sells produce"
+    },
+    {
+      "name": "Buyer",
+      "percentage": 25,
+      "description": "A wholesale buyer or market trader purchasing produce"
+    },
+    {
+      "name": "Transport",
+      "percentage": 15,
+      "description": "A transport or logistics provider moving goods"
+    },
+    {
+      "name": "General",
+      "percentage": 10,
+      "description": "A general member of the public"
+    }
+  ],
+  "questionTargets": [
+    {
+      "questionKeyword": "buyer access",
+      "targetAnswer": "difficult",
+      "targetPercentage": 75,
+      "applyToProfiles": [
+        "Farmer"
+      ]
+    },
+    {
+      "questionKeyword": "sold at low prices",
+      "targetAnswer": "yes",
+      "targetPercentage": 75,
+      "applyToProfiles": [
+        "Farmer"
+      ]
+    },
+    {
+      "questionKeyword": "fair price",
+      "targetAnswer": "not confident",
+      "targetPercentage": 60,
+      "applyToProfiles": [
+        "Farmer"
+      ]
+    },
+    {
+      "questionKeyword": "list future harvest",
+      "targetAnswer": "yes, interested",
+      "targetPercentage": 80,
+      "applyToProfiles": [
+        "Farmer"
+      ]
+    }
+  ]
+}

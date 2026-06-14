@@ -1,0 +1,56 @@
+{
+  "respondentProfiles": [
+    {
+      "name": "Farmer",
+      "percentage": 50,
+      "description": "A small-scale farmer who grows and sells produce directly"
+    },
+    {
+      "name": "Buyer",
+      "percentage": 25,
+      "description": "A wholesale buyer or market trader purchasing produce from farmers"
+    },
+    {
+      "name": "Transport",
+      "percentage": 15,
+      "description": "A transport or logistics provider moving agricultural goods"
+    },
+    {
+      "name": "General",
+      "percentage": 10,
+      "description": "A general member of the public with interest in food supply"
+    }
+  ],
+  "questionTargets": [
+    {
+      "questionKeyword": "buyer access",
+      "targetAnswer": "difficult — farmers have limited direct access to buyers",
+      "targetPercentage": 75,
+      "applyToProfiles": ["Farmer"]
+    },
+    {
+      "questionKeyword": "sold at low prices",
+      "targetAnswer": "yes, I have sold at prices lower than expected",
+      "targetPercentage": 75,
+      "applyToProfiles": ["Farmer"]
+    },
+    {
+      "questionKeyword": "fair price",
+      "targetAnswer": "not confident about receiving a fair price",
+      "targetPercentage": 60,
+      "applyToProfiles": ["Farmer"]
+    },
+    {
+      "questionKeyword": "list future harvest",
+      "targetAnswer": "yes, I would be interested in listing my future harvest",
+      "targetPercentage": 80,
+      "applyToProfiles": ["Farmer"]
+    },
+    {
+      "questionKeyword": "platform",
+      "targetAnswer": "would be very useful for connecting buyers and sellers",
+      "targetPercentage": 70,
+      "applyToProfiles": ["Buyer", "Farmer"]
+    }
+  ]
+}

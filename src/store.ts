@@ -20,8 +20,20 @@ export interface Order {
   createdAt: number;
 }
 
-export const jobs = new Map<string, Job>();
-export const orders = new Map<string, Order>();
+// In Next.js dev mode each route module gets its own module instance on lazy
+// compile. Pinning to globalThis ensures all routes share one Map instance
+// across HMR reloads (in production this is a no-op — modules are cached once).
+declare global {
+  // eslint-disable-next-line no-var
+  var __jobs: Map<string, Job> | undefined;
+  // eslint-disable-next-line no-var
+  var __orders: Map<string, Order> | undefined;
+}
+
+export const jobs: Map<string, Job> =
+  globalThis.__jobs ?? (globalThis.__jobs = new Map());
+export const orders: Map<string, Order> =
+  globalThis.__orders ?? (globalThis.__orders = new Map());
 
 const encoder = new TextEncoder();
 

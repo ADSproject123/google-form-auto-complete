@@ -38,13 +38,18 @@ export default function PaymentSuccessPage() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [devConfirming, setDevConfirming] = useState(false);
+  const [showDevBtn, setShowDevBtn] = useState(false);
+  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDev = process.env.NODE_ENV !== 'production';
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get('orderId');
     if (!orderId) { setPhase('error'); setErrorMsg('No order ID found in URL.'); return; }
+    setCurrentOrderId(orderId);
     pollOrder(orderId);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -59,10 +64,37 @@ export default function PaymentSuccessPage() {
         setPhase('running');
         startStream(data.jobId);
       } else {
+        // Show dev button after 4 s of waiting (webhook likely unreachable locally)
+        if (isDev) setTimeout(() => setShowDevBtn(true), 4000);
         pollRef.current = setTimeout(() => pollOrder(orderId), 2000);
       }
     } catch {
       pollRef.current = setTimeout(() => pollOrder(orderId), 3000);
+    }
+  }
+
+  async function devConfirmPayment() {
+    if (!currentOrderId) return;
+    setDevConfirming(true);
+    try {
+      const res = await fetch('/api/dev/confirm-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: currentOrderId }),
+      });
+      const data = await res.json() as { ok?: boolean; jobId?: string; error?: string };
+      if (!res.ok) { alert(`Dev confirm failed: ${data.error}`); return; }
+      if (data.jobId) {
+        setOrder(prev => prev ? { ...prev, paid: true, jobId: data.jobId! } : null);
+        setPhase('running');
+        startStream(data.jobId);
+        setShowDevBtn(false);
+        if (pollRef.current) clearTimeout(pollRef.current);
+      }
+    } catch (err: unknown) {
+      alert(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDevConfirming(false);
     }
   }
 
@@ -131,6 +163,23 @@ export default function PaymentSuccessPage() {
               </div>
               <h2 className="text-xl font-semibold text-gray-800 mb-1">Confirming payment…</h2>
               <p className="text-sm text-gray-500">Waiting for bank confirmation. This usually takes a few seconds.</p>
+
+              {/* Dev-only helper: webhook unreachable on localhost */}
+              {isDev && showDevBtn && (
+                <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-left">
+                  <p className="text-xs font-semibold text-amber-700 mb-1">Development mode</p>
+                  <p className="text-xs text-amber-600 mb-3">
+                    Baray webhook can&apos;t reach localhost. Click below to simulate the payment confirmation and start the job.
+                  </p>
+                  <button
+                    onClick={devConfirmPayment}
+                    disabled={devConfirming}
+                    className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    {devConfirming ? 'Starting…' : 'Simulate payment confirmation'}
+                  </button>
+                </div>
+              )}
             </>
           )}
 

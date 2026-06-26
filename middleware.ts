@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 
 const PUBLIC_PATHS = ['/', '/login', '/auth/', '/app'];
 const WEBHOOK_PATH = '/api/webhook/';
+const PUBLIC_API_PATHS = ['/api/youtube/'];
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -33,7 +34,8 @@ export async function middleware(request: NextRequest) {
 
   const isPublic =
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
-    pathname.startsWith(WEBHOOK_PATH);
+    pathname.startsWith(WEBHOOK_PATH) ||
+    PUBLIC_API_PATHS.some(p => pathname.startsWith(p));
 
   if (!user && !isPublic) {
     const loginUrl = request.nextUrl.clone();

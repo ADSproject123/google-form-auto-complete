@@ -48,57 +48,92 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 function PdfToPptxTab() {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [layout, setLayout] = useState('16:9');
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragging(false);
     const dropped = e.dataTransfer.files[0];
-    if (dropped?.type === 'application/pdf') setFile(dropped);
+    if (dropped?.type === 'application/pdf') { setFile(dropped); setError(''); }
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = e.target.files?.[0];
-    if (picked) setFile(picked);
+    if (picked) { setFile(picked); setError(''); }
+  }
+
+  async function convert() {
+    if (!file) return;
+    setConverting(true);
+    setError('');
+    setProgress('Uploading PDF...');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('layout', layout);
+
+      setProgress('Converting pages to slides...');
+
+      const res = await fetch('/api/pdf-to-pptx', { method: 'POST', body: form });
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || 'Conversion failed');
+      }
+
+      setProgress('Preparing download...');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name.replace(/\.pdf$/i, '.pptx');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setProgress('Done!');
+      setTimeout(() => setProgress(''), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Conversion failed');
+      setProgress('');
+    } finally {
+      setConverting(false);
+    }
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-5">
 
       {/* Upload area */}
       <section className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Upload PDF</h2>
-
         <div
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
-          className={`relative border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center cursor-pointer transition-colors ${
-            dragging
-              ? 'border-blue-400 bg-blue-50'
-              : file
-              ? 'border-green-300 bg-green-50'
-              : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+          className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+            dragging ? 'border-orange-400 bg-orange-50'
+            : file ? 'border-green-300 bg-green-50'
+            : 'border-gray-200 hover:border-orange-300 hover:bg-gray-50'
           }`}
         >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf,application/pdf"
-            className="hidden"
-            onChange={handleFile}
-          />
+          <input ref={inputRef} type="file" accept=".pdf,application/pdf" className="hidden" onChange={handleFile} />
           {file ? (
             <>
               <svg className="w-10 h-10 text-green-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-sm font-semibold text-gray-800">{file.name}</p>
-              <p className="text-xs text-gray-400 mt-1">{(file.size / 1024).toFixed(0)} KB</p>
+              <p className="text-xs text-gray-400 mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB · {Math.round(file.size / 1024)} KB</p>
               <button
-                onClick={e => { e.stopPropagation(); setFile(null); }}
-                className="mt-3 text-xs text-red-400 hover:text-red-600"
+                onClick={e => { e.stopPropagation(); setFile(null); setError(''); setProgress(''); }}
+                className="mt-3 text-xs text-red-400 hover:text-red-600 transition-colors"
               >
                 Remove
               </button>
@@ -108,7 +143,7 @@ function PdfToPptxTab() {
               <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
-              <p className="text-sm font-medium text-gray-600">Drop a PDF here, or <span className="text-blue-600">browse</span></p>
+              <p className="text-sm font-medium text-gray-600">Drop a PDF here, or <span className="text-orange-500">browse</span></p>
               <p className="text-xs text-gray-400 mt-1">PDF files only</p>
             </>
           )}
@@ -118,46 +153,57 @@ function PdfToPptxTab() {
       {/* Options */}
       <section className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Options</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Slide layout</label>
-            <select
-              disabled
-              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-400 bg-gray-50 cursor-not-allowed"
-            >
-              <option>Auto (match PDF)</option>
-              <option>16:9 Widescreen</option>
-              <option>4:3 Standard</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Theme</label>
-            <select
-              disabled
-              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-400 bg-gray-50 cursor-not-allowed"
-            >
-              <option>Default</option>
-              <option>Minimal</option>
-              <option>Dark</option>
-            </select>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1.5">Slide layout</label>
+          <div className="flex gap-2">
+            {[
+              { value: '16:9', label: '16:9', desc: 'Widescreen' },
+              { value: '4:3', label: '4:3', desc: 'Standard' },
+              { value: 'A4', label: 'A4', desc: 'Portrait' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setLayout(opt.value)}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
+                  layout === opt.value
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-orange-300 hover:text-orange-500'
+                }`}
+              >
+                <span className="block">{opt.label}</span>
+                <span className={`text-[11px] font-normal ${layout === opt.value ? 'text-orange-100' : 'text-gray-400'}`}>{opt.desc}</span>
+              </button>
+            ))}
           </div>
         </div>
       </section>
 
       {/* Convert button */}
-      <div className="flex items-center gap-4">
+      <div className="space-y-2">
         <button
-          disabled
-          className="flex-1 bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          onClick={convert}
+          disabled={!file || converting}
+          className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-          </svg>
-          Convert to PPTX
+          {converting ? (
+            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+          )}
+          {converting ? progress || 'Converting...' : 'Convert to PPTX'}
         </button>
-        <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 font-medium whitespace-nowrap">
-          Coming soon
-        </span>
+
+        {progress === 'Done!' && (
+          <p className="text-center text-xs text-green-600 font-medium">Download started successfully</p>
+        )}
+        {error && (
+          <p className="text-center text-xs text-red-500">{error}</p>
+        )}
       </div>
 
     </div>

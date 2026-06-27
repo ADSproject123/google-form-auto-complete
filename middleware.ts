@@ -3,7 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 
 const PUBLIC_PATHS = ['/', '/login', '/auth/', '/app'];
 const WEBHOOK_PATH = '/api/webhook/';
-const PUBLIC_API_PATHS = ['/api/youtube/'];
+const PUBLIC_API_PATHS = ['/api/youtube/', '/api/pdf-to-pptx'];
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
 
     orders.set(orderId, {
       id: orderId,
+      kind: 'form_fill',
+      userId: '',
       paid: false,
       price,
       respondentCount,

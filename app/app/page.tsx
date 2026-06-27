@@ -7,7 +7,9 @@ import { createClient } from '@/src/lib/supabase/client';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
-type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube';
+type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'credits';
+
+type TabProps = { balance: number | null; onGoToCredits: () => void };
 
 const TYPE_BADGE: Record<string, string> = {
   text: 'bg-blue-100 text-blue-700',
@@ -42,10 +44,15 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
     label: 'YouTube Downloader',
     icon: 'M15 10l4.553-2.869A1 1 0 0121 8.054v7.892a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z',
   },
+  {
+    id: 'credits',
+    label: 'Credits',
+    icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
 ];
 
 // ── PDF → PPTX tab ─────────────────────────────────────────────────────────────
-function PdfToPptxTab() {
+function PdfToPptxTab({ balance, onGoToCredits }: TabProps) {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [layout, setLayout] = useState('16:9');
@@ -53,6 +60,7 @@ function PdfToPptxTab() {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const PDF_COST = 10;
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -68,6 +76,7 @@ function PdfToPptxTab() {
 
   async function convert() {
     if (!file) return;
+    if (balance !== null && balance < PDF_COST) { onGoToCredits(); return; }
     setConverting(true);
     setError('');
     setProgress('Uploading PDF...');
@@ -81,6 +90,10 @@ function PdfToPptxTab() {
 
       const res = await fetch('/api/pdf-to-pptx', { method: 'POST', body: form });
 
+      if (res.status === 402) {
+        const d = await res.json() as { required: number; balance: number };
+        throw new Error(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
+      }
       if (!res.ok) {
         const msg = await res.text();
         throw new Error(msg || 'Conversion failed');
@@ -178,26 +191,38 @@ function PdfToPptxTab() {
         </div>
       </section>
 
-      {/* Convert button */}
+      {/* Credit cost + convert button */}
       <div className="space-y-2">
-        <button
-          onClick={convert}
-          disabled={!file || converting}
-          className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
-        >
-          {converting ? (
-            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-          )}
-          {converting ? progress || 'Converting...' : 'Convert to PPTX'}
-        </button>
-
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < PDF_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-orange-700 bg-orange-50 border-orange-200'
+        }`}>
+          Cost: {PDF_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+        {balance !== null && balance < PDF_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {PDF_COST - balance} more)
+          </button>
+        ) : (
+          <button
+            onClick={convert}
+            disabled={!file || converting}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {converting ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+            )}
+            {converting ? progress || 'Converting...' : `Convert to PPTX · ${PDF_COST} credits`}
+          </button>
+        )}
         {progress === 'Done!' && (
           <p className="text-center text-xs text-green-600 font-medium">Download started successfully</p>
         )}
@@ -228,9 +253,10 @@ function formatDuration(secs: number) {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function YoutubeTab() {
+function YoutubeTab({ balance, onGoToCredits }: TabProps) {
   const [url, setUrl] = useState('');
   const [info, setInfo] = useState<VideoInfo | null>(null);
+  const YT_COST = 5;
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
   const [format, setFormat] = useState<'mp4' | 'mp3'>('mp4');
@@ -256,17 +282,36 @@ function YoutubeTab() {
     }
   }
 
-  function startDownload() {
+  async function startDownload() {
     if (!url.trim()) return;
+    if (balance !== null && balance < YT_COST) { onGoToCredits(); return; }
     setDownloading(true);
-    const params = new URLSearchParams({ url: url.trim(), format, quality });
-    const a = document.createElement('a');
-    a.href = `/api/youtube/download?${params}`;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => setDownloading(false), 3000);
+    try {
+      const params = new URLSearchParams({ url: url.trim(), format, quality });
+      const res = await fetch(`/api/youtube/download?${params}`);
+      if (res.status === 402) {
+        const d = await res.json() as { required: number; balance: number };
+        alert(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
+        onGoToCredits();
+        return;
+      }
+      if (!res.ok) { alert('Download failed: ' + await res.text()); return; }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const cd = res.headers.get('Content-Disposition') ?? '';
+      const match = cd.match(/filename="([^"]+)"/);
+      a.download = match ? match[1] : `video.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`Download error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDownloading(false);
+    }
   }
 
   return (
@@ -394,31 +439,46 @@ function YoutubeTab() {
         )}
       </section>
 
-      {/* Download button */}
-      <button
-        onClick={startDownload}
-        disabled={!info || downloading}
-        className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
-      >
-        {downloading ? (
-          <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
+      {/* Credit cost + download button */}
+      <div className="space-y-2">
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < YT_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-blue-700 bg-blue-50 border-blue-200'
+        }`}>
+          Cost: {YT_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+        {balance !== null && balance < YT_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {YT_COST - balance} more)
+          </button>
         ) : (
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
+          <button
+            onClick={startDownload}
+            disabled={!info || downloading}
+            className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {downloading ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            {downloading ? 'Downloading...' : `Download ${format.toUpperCase()} · ${YT_COST} credits`}
+          </button>
         )}
-        {downloading ? 'Starting download...' : `Download ${format.toUpperCase()}`}
-      </button>
+      </div>
 
     </div>
   );
 }
 
 // ── Form Filler tab ────────────────────────────────────────────────────────────
-function FormFillerTab() {
+function FormFillerTab({ balance, onGoToCredits }: TabProps) {
   const [fields, setFields] = useState<FormField[]>([]);
   const [formTitle, setFormTitle] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(-1);
@@ -434,12 +494,12 @@ function FormFillerTab() {
   const [statusType, setStatusType] = useState<'' | 'info' | 'success' | 'error'>('');
   const [inspecting, setInspecting] = useState(false);
   const [payBtnDisabled, setPayBtnDisabled] = useState(false);
-  const [payBtnText, setPayBtnText] = useState('Pay & Start');
+  const [payBtnText, setPayBtnText] = useState('Submit');
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
   const fc = useRef<Record<string, UIFieldConfig>>({});
 
-  const price = (Math.ceil(Math.max(respondentCount, 1) / 10) * 0.10).toFixed(2);
+  const creditCost = Math.max(respondentCount, 1);
 
   function initFc(field: FormField) {
     if (fc.current[field.label]) return;
@@ -525,12 +585,13 @@ function FormFillerTab() {
     if (errors.length) { document.getElementById('questionsSection')?.scrollIntoView({ behavior: 'smooth' }); return; }
     if (!formUrl) { alert('Please inspect a Google Form URL first.'); return; }
     if (!respondentCount || respondentCount < 1) { alert('Please enter a valid respondent count.'); return; }
+    if (balance !== null && balance < creditCost) { onGoToCredits(); return; }
 
     const fieldConfigsArr = fields.map(f => ({ ...getFc(f.label) }));
     setPayBtnDisabled(true);
-    setPayBtnText('Creating payment...');
+    setPayBtnText('Starting...');
     try {
-      const res = await fetch('/api/checkout', {
+      const res = await fetch('/api/jobs/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -543,13 +604,18 @@ function FormFillerTab() {
           fieldConfigs: fieldConfigsArr,
         }),
       });
-      const data = await res.json() as { checkoutUrl: string; error?: string };
+      const data = await res.json() as { jobId?: string; error?: string; balance?: number; required?: number };
+      if (res.status === 402) {
+        alert(`Not enough credits. Need ${data.required}, you have ${data.balance}.`);
+        onGoToCredits();
+        return;
+      }
       if (!res.ok) { alert(`Error: ${data.error}`); return; }
-      window.location.href = data.checkoutUrl;
+      window.location.href = `/payment-success?jobId=${data.jobId}`;
     } catch (err: unknown) {
       alert(`Network error: ${err instanceof Error ? err.message : String(err)}`);
       setPayBtnDisabled(false);
-      setPayBtnText('Pay & Start');
+      setPayBtnText('Submit');
     }
   }
 
@@ -898,16 +964,30 @@ function FormFillerTab() {
             </select>
           </div>
           <div>
-            <div className="text-xs text-center font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5 mb-1.5">
-              Cost: ${price} for {respondentCount} respondent{respondentCount !== 1 ? 's' : ''} ($0.10 / 10)
+            <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 mb-1.5 border ${
+              balance !== null && balance < creditCost
+                ? 'text-red-700 bg-red-50 border-red-200'
+                : 'text-blue-700 bg-blue-50 border-blue-200'
+            }`}>
+              Cost: {creditCost} credit{creditCost !== 1 ? 's' : ''}
+              {balance !== null ? ` · Balance: ${balance}` : ''}
             </div>
-            <button
-              onClick={proceedToPayment}
-              disabled={payBtnDisabled}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
-            >
-              {payBtnText}
-            </button>
+            {balance !== null && balance < creditCost ? (
+              <button
+                onClick={onGoToCredits}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              >
+                Buy Credits (need {creditCost - balance} more)
+              </button>
+            ) : (
+              <button
+                onClick={proceedToPayment}
+                disabled={payBtnDisabled}
+                className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              >
+                {payBtnText}
+              </button>
+            )}
           </div>
         </div>
         {mode === 'ai-all' && (
@@ -929,20 +1009,231 @@ function FormFillerTab() {
   );
 }
 
+// ── Credits tab ────────────────────────────────────────────────────────────────
+const PACKAGES = [
+  { id: 'starter',  credits: 100,  usd: '$1.00', popular: false, note: '' },
+  { id: 'standard', credits: 500,  usd: '$4.00', popular: true,  note: '20% off' },
+  { id: 'pro',      credits: 1200, usd: '$8.00', popular: false, note: '33% off' },
+] as const;
+
+type CreditTransaction = { id: string; delta: number; kind: string; note: string | null; created_at: string };
+
+type PollState = 'idle' | 'checking' | 'confirmed' | 'cancelled';
+
+function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onBalanceRefresh: () => void }) {
+  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [buying, setBuying] = useState<string | null>(null);
+  const [pollState, setPollState] = useState<PollState>('idle');
+  const [confirmedCredits, setConfirmedCredits] = useState<number | null>(null);
+
+  function reloadTransactions() {
+    fetch('/api/credits/balance')
+      .then(r => r.json())
+      .then((d: { transactions?: CreditTransaction[] }) => { if (d.transactions) setTransactions(d.transactions); })
+      .catch(() => {});
+  }
+
+  async function checkOrder(orderId: string) {
+    try {
+      const res = await fetch(`/api/orders/${orderId}`);
+      if (!res.ok) { setPollState('cancelled'); return; }
+      const data = await res.json() as { paid: boolean; creditsToAdd?: number };
+      if (data.paid) {
+        setPollState('confirmed');
+        setConfirmedCredits(data.creditsToAdd ?? null);
+        onBalanceRefresh();
+        reloadTransactions();
+      } else {
+        // Baray says payment is not confirmed — user cancelled or payment failed
+        setPollState('cancelled');
+      }
+    } catch {
+      setPollState('cancelled');
+    }
+  }
+
+  useEffect(() => {
+    reloadTransactions();
+
+    const params = new URLSearchParams(window.location.search);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('purchased');
+    url.searchParams.delete('tab');
+    url.searchParams.delete('orderId');
+    url.searchParams.delete('cancelled');
+    window.history.replaceState({}, '', url.toString());
+
+    const orderId = params.get('orderId');
+    if (orderId) {
+      setPollState('checking');
+      checkOrder(orderId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function buyPackage(packageId: string) {
+    setBuying(packageId);
+    try {
+      const res = await fetch('/api/credits/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packageId }),
+      });
+      const data = await res.json() as { checkoutUrl?: string; error?: string };
+      if (!res.ok) { alert(data.error ?? 'Failed to create payment'); return; }
+      window.location.href = data.checkoutUrl!;
+    } catch (err) {
+      alert(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBuying(null);
+    }
+  }
+
+  const kindLabel: Record<string, string> = {
+    purchase:    'Purchase',
+    form_fill:   'Form Fill',
+    pdf_convert: 'PDF Convert',
+    youtube_dl:  'YouTube',
+    refund:      'Refund',
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+
+      {pollState === 'checking' && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800 flex items-center gap-3">
+          <svg className="animate-spin w-5 h-5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <p className="font-medium">Verifying payment…</p>
+        </div>
+      )}
+
+      {pollState === 'confirmed' && (
+        <div className="p-4 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700 flex items-center gap-3">
+          <svg className="w-5 h-5 shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-medium">
+            {confirmedCredits ? `${confirmedCredits} credits added to your account!` : 'Credits added to your account!'}
+          </span>
+        </div>
+      )}
+
+      {pollState === 'cancelled' && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-3">
+          <svg className="w-5 h-5 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          <span>Payment was cancelled or not confirmed. No credits were added.</span>
+        </div>
+      )}
+
+      {/* Balance card */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Your Balance</p>
+          <p className="text-4xl font-bold text-gray-900">{balance === null ? '—' : balance.toLocaleString()}</p>
+          <p className="text-xs text-gray-400 mt-1">credits</p>
+        </div>
+        <div className="text-right text-xs text-gray-400 space-y-1">
+          <p>Form fill — 1 credit / respondent</p>
+          <p>PDF to PPTX — 10 credits</p>
+          <p>YouTube download — 5 credits</p>
+        </div>
+      </section>
+
+      {/* Packages */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Buy Credits</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {PACKAGES.map(pkg => (
+            <div key={pkg.id} className={`relative rounded-xl border p-4 flex flex-col items-center text-center ${pkg.popular ? 'border-blue-300 bg-blue-50' : 'border-gray-200'}`}>
+              {pkg.popular && (
+                <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                  POPULAR
+                </span>
+              )}
+              <p className="text-2xl font-bold text-gray-900 mt-1">{pkg.credits.toLocaleString()}</p>
+              <p className="text-xs text-gray-400 mb-1">credits</p>
+              <p className="text-base font-semibold text-gray-800">{pkg.usd}</p>
+              {pkg.note && <p className="text-xs text-green-600 font-medium mt-0.5">{pkg.note}</p>}
+              <button
+                onClick={() => buyPackage(pkg.id)}
+                disabled={buying === pkg.id}
+                className={`mt-3 w-full py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
+                  pkg.popular
+                    ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                    : 'bg-gray-900 hover:bg-gray-700 text-white'
+                }`}
+              >
+                {buying === pkg.id ? 'Redirecting…' : 'Buy'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Transaction history */}
+      {transactions.length > 0 && (
+        <section className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Recent Activity</h2>
+          <div className="space-y-2">
+            {transactions.map(tx => (
+              <div key={tx.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">{kindLabel[tx.kind] ?? tx.kind}</span>
+                  {tx.note && <span className="ml-2 text-xs text-gray-400 truncate max-w-[240px] inline-block align-middle">{tx.note}</span>}
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`text-sm font-semibold ${tx.delta > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                    {tx.delta > 0 ? '+' : ''}{tx.delta}
+                  </span>
+                  <span className="text-xs text-gray-400">{new Date(tx.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+    </div>
+  );
+}
+
 // ── Root page ──────────────────────────────────────────────────────────────────
 export default function AppPage() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('form-filler');
+  const [balance, setBalance] = useState<number | null>(null);
   const router = useRouter();
+
+  async function refreshBalance() {
+    const res = await fetch('/api/credits/balance');
+    if (res.ok) {
+      const data = await res.json() as { balance: number };
+      setBalance(data.balance);
+    }
+  }
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+      if (data.user) refreshBalance();
+    });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) refreshBalance();
+      else setBalance(null);
     });
+
+    // Handle return from credit purchase (?tab=credits)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'credits') setActiveTab('credits');
+
     return () => subscription.unsubscribe();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signOut() {
     const supabase = createClient();
@@ -951,12 +1242,14 @@ export default function AppPage() {
     router.refresh();
   }
 
+  const tabProps: TabProps = { balance, onGoToCredits: () => setActiveTab('credits') };
+
   return (
-    <div className="bg-gray-50 min-h-screen">
+    <div className="flex flex-col h-screen bg-gray-50">
 
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto flex items-center gap-3">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 shrink-0 z-10">
+        <div className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.png" alt="Dev Kilo Zin" className="w-9 h-9 rounded-lg object-cover" />
           <h1 className="text-lg font-semibold text-gray-900">Dev Kilo Zin</h1>
@@ -984,34 +1277,48 @@ export default function AppPage() {
         </div>
       </header>
 
-      {/* Tab bar */}
-      <div className="bg-white border-b border-gray-200 px-6">
-        <div className="max-w-5xl mx-auto flex gap-1">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-                activeTab === tab.id
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={tab.icon} />
-              </svg>
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <div className="flex flex-1 overflow-hidden">
 
-      {/* Tab content */}
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        {activeTab === 'form-filler' && <FormFillerTab />}
-        {activeTab === 'pdf-to-pptx' && <PdfToPptxTab />}
-        {activeTab === 'youtube' && <YoutubeTab />}
-      </main>
+        {/* Sidebar */}
+        <aside className="w-52 bg-white border-r border-gray-200 shrink-0 flex flex-col">
+          {/* Balance chip */}
+          {user && (
+            <div className="px-4 py-3 border-b border-gray-100">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Credits</p>
+              <p className="text-xl font-bold text-gray-900 mt-0.5">
+                {balance === null ? '—' : balance.toLocaleString()}
+              </p>
+            </div>
+          )}
+          <nav className="flex-1 p-3 space-y-1">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left ${
+                  activeTab === tab.id
+                    ? 'bg-blue-50 text-blue-600'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={tab.icon} />
+                </svg>
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Main content */}
+        <main className="flex-1 overflow-y-auto px-6 py-8">
+          {activeTab === 'form-filler' && <FormFillerTab {...tabProps} />}
+          {activeTab === 'pdf-to-pptx' && <PdfToPptxTab {...tabProps} />}
+          {activeTab === 'youtube' && <YoutubeTab {...tabProps} />}
+          {activeTab === 'credits' && <CreditsTab balance={balance} onBalanceRefresh={refreshBalance} />}
+        </main>
+
+      </div>
 
     </div>
   );

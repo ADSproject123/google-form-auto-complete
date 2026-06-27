@@ -12,8 +12,15 @@ export interface Job {
 
 export interface Order {
   id: string;
+  kind: 'form_fill' | 'credit_purchase';
+  userId: string;
   paid: boolean;
   price: number;
+  // credit_purchase
+  creditsToAdd?: number;
+  packageId?: string;
+  intentId?: string;
+  // form_fill (legacy)
   respondentCount: number;
   jobPayload: JobRequest;
   jobId: string | null;

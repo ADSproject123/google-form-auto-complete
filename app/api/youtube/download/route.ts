@@ -4,6 +4,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createReadStream } from 'fs';
 import { readdir, unlink, stat } from 'fs/promises';
+import { createClient } from '@/src/lib/supabase/server';
+import { CREDIT_COSTS, spendCredits } from '@/src/credits';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -35,10 +37,23 @@ async function findOutputFile(dir: string, prefix: string): Promise<string | nul
 }
 
 export async function GET(req: NextRequest) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response('Unauthorized', { status: 401 });
+
   const url = req.nextUrl.searchParams.get('url') ?? '';
   const format = req.nextUrl.searchParams.get('format') ?? 'mp4';
 
   if (!url) return new Response('Missing URL', { status: 400 });
+
+  const cost = CREDIT_COSTS.youtube_dl;
+  const spent = await spendCredits(cost, 'youtube_dl', `Download ${format.toUpperCase()}: ${url.slice(0, 80)}`);
+  if (!spent.ok) {
+    return new Response(
+      JSON.stringify({ error: 'Insufficient credits', required: cost, balance: spent.balance }),
+      { status: 402, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
 
   const prefix = `yt-${Date.now()}`;
   const outputTemplate = join(tmpdir(), `${prefix}.%(ext)s`);
@@ -77,7 +92,7 @@ export async function GET(req: NextRequest) {
     const nodeStream = createReadStream(filePath);
     const readable = new ReadableStream({
       start(controller) {
-        nodeStream.on('data', (chunk: Buffer) => controller.enqueue(chunk));
+        nodeStream.on('data', (chunk) => controller.enqueue(chunk as Buffer));
         nodeStream.on('end', () => {
           controller.close();
           unlink(filePath).catch(() => {});

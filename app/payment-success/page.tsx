@@ -47,6 +47,13 @@ export default function PaymentSuccessPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const directJobId = params.get('jobId');
+    if (directJobId) {
+      // Credit-based job: already started, skip payment polling
+      setPhase('running');
+      startStream(directJobId);
+      return;
+    }
     const orderId = params.get('orderId');
     if (!orderId) { setPhase('error'); setErrorMsg('No order ID found in URL.'); return; }
     setCurrentOrderId(orderId);

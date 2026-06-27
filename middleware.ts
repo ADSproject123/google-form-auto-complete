@@ -3,7 +3,6 @@ import { createServerClient } from '@supabase/ssr';
 
 const PUBLIC_PATHS = ['/', '/login', '/auth/', '/app'];
 const WEBHOOK_PATH = '/api/webhook/';
-const PUBLIC_API_PATHS = ['/api/youtube/', '/api/pdf-to-pptx'];
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -34,10 +33,12 @@ export async function middleware(request: NextRequest) {
 
   const isPublic =
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
-    pathname.startsWith(WEBHOOK_PATH) ||
-    PUBLIC_API_PATHS.some(p => pathname.startsWith(p));
+    pathname.startsWith(WEBHOOK_PATH);
 
   if (!user && !isPublic) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = '/login';
     loginUrl.searchParams.set('next', pathname);

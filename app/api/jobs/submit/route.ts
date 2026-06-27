@@ -1,44 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
-import { jobs, orders, jobLog, broadcast } from '@/src/store';
+import { createClient } from '@/src/lib/supabase/server';
+import { CREDIT_COSTS, spendCredits } from '@/src/credits';
+import { jobs, jobLog, broadcast } from '@/src/store';
 import { fillAndSubmitForm } from '@/src/formFiller';
-import type { SurveyConfig } from '@/src/types';
+import type { JobRequest, SurveyConfig } from '@/src/types';
 
-// Only available in development — disabled in production builds.
 export async function POST(req: NextRequest) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Not available in production' }, { status: 403 });
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json() as JobRequest;
+  const { url, respondentCount, headless, provider, respondentProfiles, fieldConfigs, mode = 'pct' } = body;
+
+  if (!url || !respondentCount || !provider) {
+    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  const { orderId } = await req.json() as { orderId: string };
-  if (!orderId) return NextResponse.json({ error: 'orderId required' }, { status: 400 });
+  const providerKey = provider === 'claude' ? process.env.ANTHROPIC_API_KEY : process.env.SEALION_API_KEY;
+  if (!providerKey) {
+    const keyName = provider === 'claude' ? 'ANTHROPIC_API_KEY' : 'SEALION_API_KEY';
+    return NextResponse.json({ error: `${keyName} is not configured on the server` }, { status: 400 });
+  }
 
-  const order = orders.get(orderId);
-  if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
-  if (order.paid) return NextResponse.json({ ok: true, message: 'Already processed', jobId: order.jobId });
+  const cost = respondentCount * CREDIT_COSTS.form_fill;
+  const spent = await spendCredits(cost, 'form_fill', `${respondentCount} respondent(s) — ${url.slice(0, 60)}`);
 
-  order.paid = true;
+  if (!spent.ok) {
+    return NextResponse.json(
+      { error: 'Insufficient credits', balance: spent.balance, required: cost },
+      { status: 402 },
+    );
+  }
 
   const jobId = crypto.randomUUID();
   const job: import('@/src/store').Job = {
     id: jobId,
     status: 'running',
-    total: order.respondentCount,
+    total: respondentCount,
     done: 0,
-    logs: [] as string[],
-    results: [] as import('@/src/types').FormSubmissionResult[],
-    clients: new Set<ReadableStreamDefaultController<Uint8Array>>(),
+    logs: [],
+    results: [],
+    clients: new Set(),
   };
   jobs.set(jobId, job);
-  order.jobId = jobId;
 
-  const { url, respondentCount, headless, provider, respondentProfiles, fieldConfigs, mode = 'pct' } = order.jobPayload;
   const surveyConfig: SurveyConfig | null = respondentProfiles.length > 0
     ? { respondentProfiles, questionTargets: [] }
     : null;
 
   (async () => {
-    jobLog(job, `[DEV] Payment simulated — job started: ${respondentCount} respondent(s), provider: ${provider}`);
+    jobLog(job, `Job started: ${respondentCount} respondent(s), provider: ${provider}`);
     const personaCounts: Record<string, number> = {};
 
     for (let i = 0; i < respondentCount; i++) {
@@ -87,5 +100,5 @@ export async function POST(req: NextRequest) {
     broadcast(job, 'error', { message: String(err) });
   });
 
-  return NextResponse.json({ ok: true, jobId });
+  return NextResponse.json({ jobId, creditsSpent: cost, balance: spent.balance });
 }

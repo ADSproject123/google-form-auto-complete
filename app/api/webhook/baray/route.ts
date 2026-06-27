@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
 import { jobs, orders, jobLog, broadcast } from '@/src/store';
 import { decryptOrderId } from '@/src/payment';
+import { addCreditsForUser } from '@/src/credits';
 import { fillAndSubmitForm } from '@/src/formFiller';
 import type { SurveyConfig } from '@/src/types';
 
@@ -25,6 +26,23 @@ export async function POST(req: NextRequest) {
 
   order.paid = true;
 
+  // ── Credit purchase ─────────────────────────────────────────────────────────
+  if (order.kind === 'credit_purchase') {
+    try {
+      await addCreditsForUser(
+        order.userId,
+        order.creditsToAdd!,
+        'purchase',
+        `Package: ${order.packageId} (${order.creditsToAdd} credits)`,
+      );
+    } catch (err) {
+      console.error('Failed to add credits after payment:', err);
+      return NextResponse.json({ error: 'Credits add failed' }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Legacy form-fill (direct per-job payment) ──────────────────────────────
   const jobId = crypto.randomUUID();
   const job: import('@/src/store').Job = {
     id: jobId,

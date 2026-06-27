@@ -1034,22 +1034,25 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
   }
 
   async function checkOrder(orderId: string) {
-    try {
-      const res = await fetch(`/api/orders/${orderId}`);
-      if (!res.ok) { setPollState('cancelled'); return; }
-      const data = await res.json() as { paid: boolean; creditsToAdd?: number };
-      if (data.paid) {
-        setPollState('confirmed');
-        setConfirmedCredits(data.creditsToAdd ?? null);
-        onBalanceRefresh();
-        reloadTransactions();
-      } else {
-        // Baray says payment is not confirmed — user cancelled or payment failed
-        setPollState('cancelled');
+    // Retry up to 10 times (20 seconds total) — gives webhook time to arrive
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+      try {
+        const res = await fetch(`/api/orders/${orderId}`);
+        if (!res.ok) break;
+        const data = await res.json() as { paid: boolean; creditsToAdd?: number };
+        if (data.paid) {
+          setPollState('confirmed');
+          setConfirmedCredits(data.creditsToAdd ?? null);
+          onBalanceRefresh();
+          reloadTransactions();
+          return;
+        }
+      } catch {
+        // network hiccup — keep retrying
       }
-    } catch {
-      setPollState('cancelled');
     }
+    setPollState('cancelled');
   }
 
   useEffect(() => {
@@ -1105,7 +1108,10 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          <p className="font-medium">Verifying payment…</p>
+          <div>
+            <p className="font-medium">Verifying payment…</p>
+            <p className="text-xs text-blue-600 mt-0.5">This usually takes a few seconds.</p>
+          </div>
         </div>
       )}
 

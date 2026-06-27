@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
 import { jobs, orders, jobLog, broadcast } from '@/src/store';
 import { decryptOrderId } from '@/src/payment';
-import { addCreditsForUser } from '@/src/credits';
+import { addCreditsForUser, getOrderFromDb, markOrderPaidInDb } from '@/src/credits';
 import { fillAndSubmitForm } from '@/src/formFiller';
 import type { SurveyConfig } from '@/src/types';
 
@@ -20,20 +20,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to decrypt order_id' }, { status: 400 });
   }
 
-  const order = orders.get(orderId);
-  if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
-  if (order.paid) return NextResponse.json({ ok: true, message: 'Already processed' });
+  const memOrder = orders.get(orderId);
 
-  order.paid = true;
+  // Fall back to Supabase if not in memory (serverless / cold start)
+  if (!memOrder) {
+    const dbOrder = await getOrderFromDb(orderId);
+    if (!dbOrder) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    if (dbOrder.paid) return NextResponse.json({ ok: true, message: 'Already processed' });
+    await markOrderPaidInDb(orderId);
+    try {
+      await addCreditsForUser(dbOrder.user_id, dbOrder.credits_to_add, 'purchase', `Package: ${dbOrder.package_id} (${dbOrder.credits_to_add} credits)`);
+    } catch (err) {
+      console.error('Failed to add credits (DB path):', err);
+      return NextResponse.json({ error: 'Credits add failed' }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (memOrder.paid) return NextResponse.json({ ok: true, message: 'Already processed' });
+  memOrder.paid = true;
+  await markOrderPaidInDb(orderId);
 
   // ── Credit purchase ─────────────────────────────────────────────────────────
-  if (order.kind === 'credit_purchase') {
+  if (memOrder.kind === 'credit_purchase') {
     try {
       await addCreditsForUser(
-        order.userId,
-        order.creditsToAdd!,
+        memOrder.userId,
+        memOrder.creditsToAdd!,
         'purchase',
-        `Package: ${order.packageId} (${order.creditsToAdd} credits)`,
+        `Package: ${memOrder.packageId} (${memOrder.creditsToAdd} credits)`,
       );
     } catch (err) {
       console.error('Failed to add credits after payment:', err);
@@ -41,6 +56,8 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true });
   }
+
+  const order = memOrder;
 
   // ── Legacy form-fill (direct per-job payment) ──────────────────────────────
   const jobId = crypto.randomUUID();

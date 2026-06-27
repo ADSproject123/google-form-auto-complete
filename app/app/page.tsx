@@ -1020,11 +1020,16 @@ type CreditTransaction = { id: string; delta: number; kind: string; note: string
 
 type PollState = 'idle' | 'checking' | 'confirmed' | 'cancelled';
 
+function calcCustomPrice(credits: number): number {
+  return Math.max(credits * 0.01, 0.03);
+}
+
 function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onBalanceRefresh: () => void }) {
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [buying, setBuying] = useState<string | null>(null);
   const [pollState, setPollState] = useState<PollState>('idle');
   const [confirmedCredits, setConfirmedCredits] = useState<number | null>(null);
+  const [customCredits, setCustomCredits] = useState(10);
 
   function reloadTransactions() {
     fetch('/api/credits/balance')
@@ -1091,6 +1096,25 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
     }
   }
 
+  async function buyCustom() {
+    const credits = Math.max(1, Math.floor(customCredits));
+    setBuying('custom');
+    try {
+      const res = await fetch('/api/credits/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credits }),
+      });
+      const data = await res.json() as { checkoutUrl?: string; error?: string };
+      if (!res.ok) { alert(data.error ?? 'Failed to create payment'); return; }
+      window.location.href = data.checkoutUrl!;
+    } catch (err) {
+      alert(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBuying(null);
+    }
+  }
+
   const kindLabel: Record<string, string> = {
     purchase:    'Purchase',
     form_fill:   'Form Fill',
@@ -1143,6 +1167,34 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
               </button>
             </div>
           ))}
+        </div>
+
+        {/* Custom amount */}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-medium text-gray-500 mb-3">Custom amount</p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2.5">
+              <input
+                type="number"
+                min="1"
+                value={customCredits}
+                onChange={e => setCustomCredits(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="w-full text-sm font-semibold text-gray-900 focus:outline-none bg-transparent"
+              />
+              <span className="text-xs text-gray-400 shrink-0">credits</span>
+            </div>
+            <div className="text-sm font-semibold text-gray-700 shrink-0 w-16 text-right">
+              ${calcCustomPrice(customCredits).toFixed(2)}
+            </div>
+            <button
+              onClick={buyCustom}
+              disabled={buying === 'custom'}
+              className="bg-gray-900 hover:bg-gray-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors shrink-0"
+            >
+              {buying === 'custom' ? 'Redirecting…' : 'Buy'}
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-1.5">$0.01 per credit · min $0.03</p>
         </div>
       </section>
 

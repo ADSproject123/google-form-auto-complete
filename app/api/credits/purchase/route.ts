@@ -10,9 +10,30 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { packageId } = await req.json() as { packageId: string };
-  const pkg = CREDIT_PACKAGES.find(p => p.id === packageId);
-  if (!pkg) return NextResponse.json({ error: 'Invalid package' }, { status: 400 });
+  const body = await req.json() as { packageId?: string; credits?: number };
+
+  // Resolve credits and price — either from a preset package or a custom amount
+  let credits: number;
+  let priceCents: number;
+  let label: string;
+  let packageId: string;
+
+  if (body.packageId) {
+    const pkg = CREDIT_PACKAGES.find(p => p.id === body.packageId);
+    if (!pkg) return NextResponse.json({ error: 'Invalid package' }, { status: 400 });
+    credits = pkg.credits;
+    priceCents = pkg.priceCents;
+    label = pkg.label;
+    packageId = pkg.id;
+  } else if (body.credits && body.credits >= 1) {
+    credits = Math.floor(body.credits);
+    // $0.01 per credit, minimum $0.03 (Baray minimum charge)
+    priceCents = Math.max(Math.round(credits), 3);
+    label = `${credits} Credits`;
+    packageId = 'custom';
+  } else {
+    return NextResponse.json({ error: 'Provide packageId or credits' }, { status: 400 });
+  }
 
   const orderId = crypto.randomUUID();
   const baseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3000';
@@ -21,9 +42,9 @@ export async function POST(req: NextRequest) {
   try {
     const { checkoutUrl, intentId } = await createCreditPurchaseIntent(
       orderId,
-      pkg.label,
-      pkg.credits,
-      pkg.priceCents,
+      label,
+      credits,
+      priceCents,
       successUrl,
     );
 
@@ -32,9 +53,9 @@ export async function POST(req: NextRequest) {
       kind: 'credit_purchase' as const,
       userId: user.id,
       paid: false,
-      price: pkg.priceCents / 100,
-      creditsToAdd: pkg.credits,
-      packageId: pkg.id,
+      price: priceCents / 100,
+      creditsToAdd: credits,
+      packageId,
       intentId,
       respondentCount: 0,
       jobPayload: {} as never,
@@ -48,8 +69,8 @@ export async function POST(req: NextRequest) {
       id: orderId,
       intent_id: intentId,
       user_id: user.id,
-      credits_to_add: pkg.credits,
-      package_id: pkg.id,
+      credits_to_add: credits,
+      package_id: packageId,
     });
 
     return NextResponse.json({ checkoutUrl, orderId });

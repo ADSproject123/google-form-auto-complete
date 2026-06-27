@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
 import { createClient } from '@/src/lib/supabase/server';
-import { CREDIT_PACKAGES } from '@/src/credits';
+import { CREDIT_PACKAGES, saveOrderToDb } from '@/src/credits';
 import { orders } from '@/src/store';
 import { createCreditPurchaseIntent } from '@/src/payment';
 
@@ -27,9 +27,9 @@ export async function POST(req: NextRequest) {
       successUrl,
     );
 
-    orders.set(orderId, {
+    const orderData = {
       id: orderId,
-      kind: 'credit_purchase',
+      kind: 'credit_purchase' as const,
       userId: user.id,
       paid: false,
       price: pkg.priceCents / 100,
@@ -40,6 +40,16 @@ export async function POST(req: NextRequest) {
       jobPayload: {} as never,
       jobId: null,
       createdAt: Date.now(),
+    };
+    orders.set(orderId, orderData);
+
+    // Persist to Supabase so it survives server restarts / serverless cold starts
+    await saveOrderToDb({
+      id: orderId,
+      intent_id: intentId,
+      user_id: user.id,
+      credits_to_add: pkg.credits,
+      package_id: pkg.id,
     });
 
     return NextResponse.json({ checkoutUrl, orderId });

@@ -77,3 +77,44 @@ export async function addCreditsForUser(
 export async function refundCredits(userId: string, amount: number, note: string): Promise<void> {
   await addCreditsForUser(userId, amount, 'refund', note);
 }
+
+// ── Persistent order storage (survives server restarts / serverless cold starts) ──
+
+export interface DbOrder {
+  id: string;
+  intent_id: string;
+  user_id: string;
+  credits_to_add: number;
+  package_id: string;
+  paid: boolean;
+}
+
+export async function saveOrderToDb(order: Omit<DbOrder, 'paid'>): Promise<void> {
+  const admin = createAdminClient();
+  await admin.from('pending_credit_orders').upsert({
+    id: order.id,
+    intent_id: order.intent_id,
+    user_id: order.user_id,
+    credits_to_add: order.credits_to_add,
+    package_id: order.package_id,
+    paid: false,
+  });
+}
+
+export async function getOrderFromDb(orderId: string): Promise<DbOrder | null> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from('pending_credit_orders')
+    .select('*')
+    .eq('id', orderId)
+    .single();
+  return data ?? null;
+}
+
+export async function markOrderPaidInDb(orderId: string): Promise<void> {
+  const admin = createAdminClient();
+  await admin
+    .from('pending_credit_orders')
+    .update({ paid: true })
+    .eq('id', orderId);
+}

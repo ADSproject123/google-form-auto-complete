@@ -1,5 +1,5 @@
-import { createClient } from '@/src/lib/supabase/server';
-import { createAdminClient } from '@/src/lib/supabase/admin';
+import { adminDb } from '@/src/lib/firebase/admin';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 
 export const CREDIT_COSTS = {
   form_fill:   1,  // per respondent
@@ -17,60 +17,92 @@ export const CREDIT_PACKAGES = [
 
 export type PackageId = typeof CREDIT_PACKAGES[number]['id'];
 
+const userCredits = adminDb.collection('user_credits');
+const creditTransactions = adminDb.collection('credit_transactions');
+const pendingCreditOrders = adminDb.collection('pending_credit_orders');
+
 export async function getBalance(userId: string): Promise<number> {
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from('user_credits')
-    .select('balance')
-    .eq('user_id', userId)
-    .single();
-  return data?.balance ?? 0;
+  const doc = await userCredits.doc(userId).get();
+  return (doc.data()?.balance as number | undefined) ?? 0;
 }
 
 export async function getTransactions(userId: string, limit = 20) {
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from('credit_transactions')
-    .select('id, delta, kind, note, created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return data ?? [];
+  const snap = await creditTransactions
+    .where('userId', '==', userId)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .get();
+  return snap.docs.map(d => {
+    const data = d.data();
+    return {
+      id: d.id,
+      delta: data.delta as number,
+      kind: data.kind as string,
+      note: (data.note as string | null) ?? null,
+      created_at: data.createdAt as string,
+    };
+  });
 }
 
-/** Atomically deduct credits from the authenticated user (uses Supabase RPC). */
+/** Atomically deduct credits from the currently authenticated user (Firestore transaction). */
 export async function spendCredits(
   amount: number,
   kind: string,
   note: string,
 ): Promise<{ ok: boolean; balance: number; error?: string }> {
-  const supabase = await createClient();
-  const { data, error } = await supabase.rpc('spend_credits', {
-    p_amount: amount,
-    p_kind:   kind,
-    p_note:   note,
-  });
-  if (error) return { ok: false, balance: 0, error: error.message };
-  const result = data as { ok: boolean; balance?: number; error?: string };
-  return { ok: result.ok, balance: result.balance ?? 0, error: result.error };
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, balance: 0, error: 'not_authenticated' };
+
+  const ref = userCredits.doc(user.uid);
+
+  try {
+    const balance = await adminDb.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      const current = (doc.data()?.balance as number | undefined) ?? 0;
+      if (current < amount) throw new Error('insufficient_credits');
+      const next = current - amount;
+      tx.set(ref, { balance: next, updatedAt: new Date().toISOString() }, { merge: true });
+      tx.set(creditTransactions.doc(), {
+        userId: user.uid,
+        delta: -amount,
+        kind,
+        note,
+        createdAt: new Date().toISOString(),
+      });
+      return next;
+    });
+    return { ok: true, balance };
+  } catch (err) {
+    if (err instanceof Error && err.message === 'insufficient_credits') {
+      const current = await getBalance(user.uid);
+      return { ok: false, balance: current, error: 'insufficient_credits' };
+    }
+    throw err;
+  }
 }
 
-/** Add credits to a user — called server-side (webhook) with service role. */
+/** Add credits to a user — called server-side (webhook) after confirmed payment. */
 export async function addCreditsForUser(
   userId: string,
   amount: number,
   kind: string,
   note: string,
 ): Promise<number> {
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc('add_credits_for_user', {
-    p_user_id: userId,
-    p_amount:  amount,
-    p_kind:    kind,
-    p_note:    note,
+  const ref = userCredits.doc(userId);
+  return adminDb.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    const current = (doc.data()?.balance as number | undefined) ?? 0;
+    const next = current + amount;
+    tx.set(ref, { balance: next, updatedAt: new Date().toISOString() }, { merge: true });
+    tx.set(creditTransactions.doc(), {
+      userId,
+      delta: amount,
+      kind,
+      note,
+      createdAt: new Date().toISOString(),
+    });
+    return next;
   });
-  if (error) throw new Error(error.message);
-  return data as number;
 }
 
 /** Refund credits to a user (e.g. on server-side conversion failure). */
@@ -90,31 +122,29 @@ export interface DbOrder {
 }
 
 export async function saveOrderToDb(order: Omit<DbOrder, 'paid'>): Promise<void> {
-  const admin = createAdminClient();
-  await admin.from('pending_credit_orders').upsert({
-    id: order.id,
-    intent_id: order.intent_id,
-    user_id: order.user_id,
-    credits_to_add: order.credits_to_add,
-    package_id: order.package_id,
+  await pendingCreditOrders.doc(order.id).set({
+    intentId: order.intent_id,
+    userId: order.user_id,
+    creditsToAdd: order.credits_to_add,
+    packageId: order.package_id,
     paid: false,
   });
 }
 
 export async function getOrderFromDb(orderId: string): Promise<DbOrder | null> {
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from('pending_credit_orders')
-    .select('*')
-    .eq('id', orderId)
-    .single();
-  return data ?? null;
+  const doc = await pendingCreditOrders.doc(orderId).get();
+  if (!doc.exists) return null;
+  const data = doc.data()!;
+  return {
+    id: orderId,
+    intent_id: data.intentId,
+    user_id: data.userId,
+    credits_to_add: data.creditsToAdd,
+    package_id: data.packageId,
+    paid: data.paid,
+  };
 }
 
 export async function markOrderPaidInDb(orderId: string): Promise<void> {
-  const admin = createAdminClient();
-  await admin
-    .from('pending_credit_orders')
-    .update({ paid: true })
-    .eq('id', orderId);
+  await pendingCreditOrders.doc(orderId).update({ paid: true });
 }

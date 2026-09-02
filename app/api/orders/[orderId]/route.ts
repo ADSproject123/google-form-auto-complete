@@ -9,7 +9,7 @@ export async function GET(
 ) {
   const { orderId } = await context.params;
 
-  // Try in-memory first (fast path), fall back to Supabase (survives restarts)
+  // Try in-memory first (fast path), fall back to Firestore (survives restarts)
   const memOrder = orders.get(orderId);
   if (memOrder?.paid) {
     return NextResponse.json({ id: orderId, kind: memOrder.kind, paid: true, jobId: memOrder.jobId, creditsToAdd: memOrder.creditsToAdd ?? null });

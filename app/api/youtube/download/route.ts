@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createReadStream } from 'fs';
 import { readdir, unlink, stat } from 'fs/promises';
-import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 import { CREDIT_COSTS, spendCredits } from '@/src/credits';
 
 export const dynamic = 'force-dynamic';
@@ -37,8 +37,7 @@ async function findOutputFile(dir: string, prefix: string): Promise<string | nul
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return new Response('Unauthorized', { status: 401 });
 
   const url = req.nextUrl.searchParams.get('url') ?? '';

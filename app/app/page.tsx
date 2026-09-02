@@ -2,8 +2,8 @@
 
 import { useState, useReducer, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import type { User } from '@supabase/supabase-js';
-import { createClient } from '@/src/lib/supabase/client';
+import { onAuthStateChanged, signOut as firebaseSignOut, type User } from 'firebase/auth';
+import { auth } from '@/src/lib/firebase/client';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
@@ -1241,14 +1241,9 @@ export default function AppPage() {
   }
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-      if (data.user) refreshBalance();
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) refreshBalance();
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) refreshBalance();
       else setBalance(null);
     });
 
@@ -1256,12 +1251,12 @@ export default function AppPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') === 'credits') setActiveTab('credits');
 
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await firebaseSignOut(auth);
+    await fetch('/api/auth/session', { method: 'DELETE' });
     router.push('/login');
     router.refresh();
   }

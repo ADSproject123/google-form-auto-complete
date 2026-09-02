@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
-import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 import { CREDIT_PACKAGES, saveOrderToDb } from '@/src/credits';
 import { orders } from '@/src/store';
 import { createCreditPurchaseIntent } from '@/src/payment';
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json() as { packageId?: string; credits?: number };
@@ -51,7 +50,7 @@ export async function POST(req: NextRequest) {
     const orderData = {
       id: orderId,
       kind: 'credit_purchase' as const,
-      userId: user.id,
+      userId: user.uid,
       paid: false,
       price: priceCents / 100,
       creditsToAdd: credits,
@@ -64,11 +63,11 @@ export async function POST(req: NextRequest) {
     };
     orders.set(orderId, orderData);
 
-    // Persist to Supabase so it survives server restarts / serverless cold starts
+    // Persist to Firestore so it survives server restarts / serverless cold starts
     await saveOrderToDb({
       id: orderId,
       intent_id: intentId,
-      user_id: user.id,
+      user_id: user.uid,
       credits_to_add: credits,
       package_id: packageId,
     });

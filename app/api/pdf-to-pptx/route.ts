@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import PptxGenJS from 'pptxgenjs';
-import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 import { CREDIT_COSTS, spendCredits, refundCredits } from '@/src/credits';
 
 export const dynamic = 'force-dynamic';
@@ -27,8 +27,7 @@ const A4_W = 11.69;
 const A4_H = 8.27;
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return new Response('Unauthorized', { status: 401 });
 
   const cost = CREDIT_COSTS.pdf_convert;
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest) {
     const layout = (formData.get('layout') as string) ?? '16:9';
 
     if (!file || file.type !== 'application/pdf') {
-      await refundCredits(user.id, cost, 'PDF to PPTX — invalid file refund');
+      await refundCredits(user.uid, cost, 'PDF to PPTX — invalid file refund');
       return new Response('No PDF file provided', { status: 400 });
     }
 
@@ -106,7 +105,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error('PDF→PPTX error:', err);
-    await refundCredits(user.id, cost, 'PDF to PPTX — conversion error refund').catch(() => {});
+    await refundCredits(user.uid, cost, 'PDF to PPTX — conversion error refund').catch(() => {});
     return new Response(
       err instanceof Error ? err.message : 'Conversion failed',
       { status: 500 },

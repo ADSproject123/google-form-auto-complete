@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
   const memOrder = orders.get(orderId);
 
-  // Fall back to Supabase if not in memory (serverless / cold start)
+  // Fall back to Firestore if not in memory (serverless / cold start)
   if (!memOrder) {
     const dbOrder = await getOrderFromDb(orderId);
     if (!dbOrder) return NextResponse.json({ error: 'Order not found' }, { status: 404 });

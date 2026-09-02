@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as crypto from 'crypto';
-import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 import { CREDIT_COSTS, spendCredits } from '@/src/credits';
 import { jobs, jobLog, broadcast } from '@/src/store';
 import { fillAndSubmitForm } from '@/src/formFiller';
 import type { JobRequest, SurveyConfig } from '@/src/types';
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json() as JobRequest;

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/src/lib/supabase/client';
+import { signOut as firebaseSignOut } from 'firebase/auth';
+import { auth } from '@/src/lib/firebase/client';
 
 interface Order {
   id: string;
@@ -26,8 +27,8 @@ export default function PaymentSuccessPage() {
   const router = useRouter();
 
   async function signOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await firebaseSignOut(auth);
+    await fetch('/api/auth/session', { method: 'DELETE' });
     router.push('/login');
     router.refresh();
   }

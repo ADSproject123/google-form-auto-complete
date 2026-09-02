@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@/src/lib/supabase/client';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, type AuthError } from 'firebase/auth';
+import { auth } from '@/src/lib/firebase/client';
 
 function LoginForm() {
   const [tab, setTab] = useState<'login' | 'signup'>('login');
@@ -13,46 +14,51 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  useEffect(() => {
-    if (searchParams.get('error') === 'auth_callback_failed') {
-      setMessage({ text: 'Authentication failed. Please try again.', type: 'error' });
+  async function establishSession(next: string) {
+    const idToken = await auth.currentUser!.getIdToken();
+    await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken }),
+    });
+    router.push(next);
+    router.refresh();
+  }
+
+  function friendlyAuthError(err: unknown): string {
+    const code = (err as AuthError)?.code ?? '';
+    switch (code) {
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        return 'Invalid email or password.';
+      case 'auth/email-already-in-use':
+        return 'An account with this email already exists.';
+      case 'auth/weak-password':
+        return 'Password must be at least 6 characters.';
+      case 'auth/invalid-email':
+        return 'Please enter a valid email address.';
+      default:
+        return err instanceof Error ? err.message : 'Something went wrong.';
     }
-  }, [searchParams]);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
 
-    const supabase = createClient();
-
-    if (tab === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setMessage({ text: error.message, type: 'error' });
-        setLoading(false);
+    try {
+      if (tab === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
+        await establishSession(searchParams.get('next') ?? '/app');
       } else {
-        const next = searchParams.get('next') ?? '/app';
-        router.push(next);
-        router.refresh();
+        await createUserWithEmailAndPassword(auth, email, password);
+        await establishSession('/app');
       }
-    } else {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${location.origin}/auth/callback`,
-        },
-      });
-      if (error) {
-        setMessage({ text: error.message, type: 'error' });
-        setLoading(false);
-      } else {
-        setMessage({ text: 'Check your email to confirm your account, then log in.', type: 'success' });
-        setTab('login');
-        setPassword('');
-        setLoading(false);
-      }
+    } catch (err) {
+      setMessage({ text: friendlyAuthError(err), type: 'error' });
+      setLoading(false);
     }
   }
 

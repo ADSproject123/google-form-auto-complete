@@ -1,17 +1,16 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser } from '@/src/lib/firebase/server';
 import { getBalance, getTransactions } from '@/src/credits';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const [balance, transactions] = await Promise.all([
-    getBalance(user.id),
-    getTransactions(user.id),
+    getBalance(user.uid),
+    getTransactions(user.uid),
   ]);
 
   return NextResponse.json({ balance, transactions });

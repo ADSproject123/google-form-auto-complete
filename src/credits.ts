@@ -2,9 +2,10 @@ import { adminDb } from '@/src/lib/firebase/admin';
 import { getCurrentUser } from '@/src/lib/firebase/server';
 
 export const CREDIT_COSTS = {
-  form_fill:   1,  // per respondent
-  pdf_convert: 10,
-  youtube_dl:  5,
+  form_fill:      1,  // per respondent
+  pdf_convert:    10,
+  youtube_dl:     5,
+  video_compress: 15,
 } as const;
 
 export type CreditKind = keyof typeof CREDIT_COSTS | 'purchase' | 'refund';

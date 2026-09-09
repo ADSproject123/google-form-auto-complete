@@ -1,4 +1,5 @@
-import { chromium, Page } from 'playwright';
+import { Page } from 'playwright';
+import { launchChromium } from './browserLauncher';
 import { FormField } from './types';
 
 const TYPE_ID_MAP: Record<number, string> = {
@@ -160,7 +161,7 @@ export async function extractFields(page: Page): Promise<{ fields: FormField[]; 
 }
 
 export async function inspectForm(url: string): Promise<{ fields: FormField[]; title: string }> {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
 

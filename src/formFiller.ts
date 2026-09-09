@@ -1,4 +1,5 @@
-import { chromium, Page } from 'playwright';
+import { Page } from 'playwright';
+import { launchChromium } from './browserLauncher';
 import { FormField, FormSubmissionResult, SurveyConfig, UIFieldConfig, AnswerMode } from './types';
 import { generateAllTextAnswers, generateChoiceAnswer, inferFormContext, AIProvider } from './aiGenerator';
 import { assignPersona, getAnswerHint } from './configLoader';
@@ -266,7 +267,7 @@ export async function fillAndSubmitForm(
   mode: AnswerMode = 'pct',
   onLog: (msg: string) => void = console.log
 ): Promise<FormSubmissionResult> {
-  const browser = await chromium.launch({ headless });
+  const browser = await launchChromium({ headless });
   const context = await browser.newContext();
   const page = await context.newPage();
 

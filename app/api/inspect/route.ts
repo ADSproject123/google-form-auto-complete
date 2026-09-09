@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { inspectForm } from '@/src/inspector';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const { url } = await req.json() as { url: string };
   if (!url) return NextResponse.json({ error: 'url is required' }, { status: 400 });

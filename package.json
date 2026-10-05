@@ -14,6 +14,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
     "@distube/ytdl-core": "^4.16.12",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sparticuz/chromium": "^152.0.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "dotenv": "^17.4.2",

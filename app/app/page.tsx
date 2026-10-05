@@ -266,6 +266,7 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
   const [file, setFile] = useState<File | null>(null);
   const [quality, setQuality] = useState<QualityTier>('balanced');
   const [targetMb, setTargetMb] = useState<string>('10');
+  const [duration, setDuration] = useState<number | null>(null);
   const [compressing, setCompressing] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
@@ -279,6 +280,18 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
     setResult(null);
     const approx = Math.max(0.5, Math.round((f.size / (1024 * 1024) * 0.5) * 10) / 10);
     setTargetMb(String(approx));
+
+    // Determine duration in browser
+    const videoUrl = URL.createObjectURL(f);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      if (Number.isFinite(v.duration) && v.duration > 0) {
+        setDuration(v.duration);
+      }
+      URL.revokeObjectURL(videoUrl);
+    };
+    v.src = videoUrl;
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -322,6 +335,9 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
       const form = new FormData();
       form.append('file', file);
       form.append('quality', quality);
+      if (duration) {
+        form.append('duration', String(duration));
+      }
       if (quality === 'custom') {
         form.append('targetMb', targetMb);
       }

@@ -18,9 +18,19 @@ const QUALITY_PRESETS: Record<Exclude<QualityTier, 'custom'>, { crf: number; pre
   small:    { crf: 28, preset: 'fast',   maxHeight: 720,  audioBitrate: '96k'  },
 };
 
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+
+function getFfmpegPath(): string {
+  if (ffmpegInstaller.path && fs.existsSync(ffmpegInstaller.path)) {
+    return ffmpegInstaller.path;
+  }
+  return 'ffmpeg';
+}
+
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', args);
+    const ffmpegPath = getFfmpegPath();
+    const proc = spawn(ffmpegPath, args);
     let stderr = '';
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
     proc.on('close', (code) => {
@@ -28,27 +38,29 @@ function runFfmpeg(args: string[]): Promise<void> {
       else reject(new Error(stderr.split('\n').filter(Boolean).at(-1) ?? `ffmpeg exited with code ${code}`));
     });
     proc.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') reject(new Error('ffmpeg is not installed. Run: apt install ffmpeg'));
+      if (err.code === 'ENOENT') reject(new Error('ffmpeg binary not found.'));
       else reject(err);
     });
   });
 }
 
+/** Determines video duration using ffmpeg -i stderr (avoids requiring ffprobe binary) */
 function probeDurationSeconds(inputPath: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffprobe', [
-      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', inputPath,
-    ]);
-    let out = '';
-    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    const ffmpegPath = getFfmpegPath();
+    const proc = spawn(ffmpegPath, ['-i', inputPath]);
+    let stderr = '';
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
     proc.on('close', () => {
-      const secs = parseFloat(out.trim());
-      if (Number.isFinite(secs) && secs > 0) resolve(secs);
-      else reject(new Error('Could not read video duration'));
+      const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (match) {
+        const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+        if (Number.isFinite(secs) && secs > 0) return resolve(secs);
+      }
+      reject(new Error('Could not determine video duration'));
     });
     proc.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') reject(new Error('ffprobe is not installed. Run: apt install ffmpeg'));
-      else reject(err);
+      reject(err);
     });
   });
 }
@@ -94,6 +106,7 @@ export async function POST(req: NextRequest) {
     const isCustom = qualityRaw === 'custom';
     const quality = qualityRaw as QualityTier;
     const targetMb = Number(formData.get('targetMb'));
+    const clientDuration = Number(formData.get('duration'));
 
     if (!file || !file.type.startsWith('video/')) {
       await refundCredits(user.uid, cost, 'Video compress — invalid file refund');
@@ -123,7 +136,10 @@ export async function POST(req: NextRequest) {
     fs.writeFileSync(inputPath, inputBuffer);
 
     if (isCustom) {
-      const duration = await probeDurationSeconds(inputPath);
+      let duration = Number.isFinite(clientDuration) && clientDuration > 0 ? clientDuration : 0;
+      if (!duration) {
+        duration = await probeDurationSeconds(inputPath);
+      }
       const plan = planForTargetSize(Math.floor(targetMb * 1024 * 1024), duration);
       const vf = plan.maxHeight ? ['-vf', `scale=-2:min(ih\\,${plan.maxHeight})`] : [];
       const passLog = path.join(tmpDir, 'ffpass');

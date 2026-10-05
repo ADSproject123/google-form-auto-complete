@@ -2,11 +2,12 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, type AuthError } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, type AuthError } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase/client';
 
 function LoginForm() {
   const [tab, setTab] = useState<'login' | 'signup'>('login');
+  const [forgot, setForgot] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -38,6 +39,8 @@ function LoginForm() {
         return 'Password must be at least 6 characters.';
       case 'auth/invalid-email':
         return 'Please enter a valid email address.';
+      case 'auth/too-many-requests':
+        return 'Too many attempts. Please try again later.';
       default:
         return err instanceof Error ? err.message : 'Something went wrong.';
     }
@@ -49,6 +52,20 @@ function LoginForm() {
     setMessage(null);
 
     try {
+      if (forgot) {
+        try {
+          await sendPasswordResetEmail(auth, email, {
+            url: `${window.location.origin}/login`,
+          });
+        } catch (err) {
+          const code = (err as AuthError)?.code;
+          // Don't reveal whether an account exists
+          if (code !== 'auth/user-not-found') throw err;
+        }
+        setMessage({ text: 'If an account exists for that email, a password reset link has been sent. Check your inbox (and spam).', type: 'success' });
+        setLoading(false);
+        return;
+      }
       if (tab === 'login') {
         await signInWithEmailAndPassword(auth, email, password);
         await establishSession(searchParams.get('next') ?? '/app');
@@ -80,13 +97,13 @@ function LoginForm() {
           {/* Tabs */}
           <div className="flex border-b border-gray-100">
             <button
-              onClick={() => { setTab('login'); setMessage(null); }}
+              onClick={() => { setTab('login'); setForgot(false); setMessage(null); }}
               className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${tab === 'login' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
             >
               Sign in
             </button>
             <button
-              onClick={() => { setTab('signup'); setMessage(null); }}
+              onClick={() => { setTab('signup'); setForgot(false); setMessage(null); }}
               className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${tab === 'signup' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
             >
               Create account
@@ -106,8 +123,20 @@ function LoginForm() {
                 className="w-full border border-gray-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
+            {!forgot && (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-medium text-gray-600">Password</label>
+                {tab === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => { setForgot(true); setMessage(null); }}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
               <input
                 type="password"
                 required
@@ -121,6 +150,10 @@ function LoginForm() {
                 <p className="mt-1 text-xs text-gray-400">Minimum 6 characters</p>
               )}
             </div>
+            )}
+            {forgot && (
+              <p className="text-xs text-gray-500">Enter your email and we&apos;ll send you a link to reset your password.</p>
+            )}
 
             {message && (
               <div className={`rounded-lg px-3.5 py-2.5 text-xs font-medium ${
@@ -143,8 +176,17 @@ function LoginForm() {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
               )}
-              {loading ? 'Please wait…' : tab === 'login' ? 'Sign in' : 'Create account'}
+              {loading ? 'Please wait…' : forgot ? 'Send reset link' : tab === 'login' ? 'Sign in' : 'Create account'}
             </button>
+            {forgot && (
+              <button
+                type="button"
+                onClick={() => { setForgot(false); setMessage(null); }}
+                className="w-full text-xs text-gray-500 hover:text-gray-700"
+              >
+                Back to sign in
+              </button>
+            )}
           </form>
         </div>
 

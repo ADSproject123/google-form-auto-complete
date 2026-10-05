@@ -16,3 +16,5 @@ out/
 *.tsbuildinfo
 *.eslintcache
 *.prettiercache
+.vercel
+.env*

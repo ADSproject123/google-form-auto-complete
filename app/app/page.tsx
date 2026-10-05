@@ -7,7 +7,7 @@ import { auth } from '@/src/lib/firebase/client';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
-type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'credits';
+type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'image-compress' | 'credits';
 
 type TabProps = { balance: number | null; onGoToCredits: () => void };
 
@@ -48,6 +48,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
     id: 'video-compress',
     label: 'Video Compress',
     icon: 'M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5M15 15l5.25 5.25',
+  },
+  {
+    id: 'image-compress',
+    label: 'Image Compress',
+    icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z',
   },
   {
     id: 'credits',
@@ -422,6 +427,235 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
               </svg>
             )}
             {compressing ? progress || 'Compressing...' : `Compress Video · ${VIDEO_COST} credits`}
+          </button>
+        )}
+        {result && progress === 'Done!' && (
+          <p className="text-center text-xs text-green-600 font-medium">
+            {formatBytes(result.originalSize)} → {formatBytes(result.compressedSize)}
+            {result.originalSize > 0 && ` (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% smaller)`}
+          </p>
+        )}
+        {error && (
+          <p className="text-center text-xs text-red-500">{error}</p>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+// ── Image Compress tab ─────────────────────────────────────────────────────────
+type ImageFormat = 'original' | 'jpeg' | 'png' | 'webp' | 'avif';
+
+const IMAGE_QUALITY_OPTIONS: { value: QualityTier; label: string; desc: string }[] = [
+  { value: 'high', label: 'High Quality', desc: 'Original size' },
+  { value: 'balanced', label: 'Balanced', desc: 'Up to 2560px' },
+  { value: 'small', label: 'Small File', desc: 'Up to 1600px' },
+];
+
+const IMAGE_FORMAT_OPTIONS: { value: ImageFormat; label: string }[] = [
+  { value: 'original', label: 'Keep format' },
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'png', label: 'PNG' },
+  { value: 'webp', label: 'WebP' },
+  { value: 'avif', label: 'AVIF' },
+];
+
+const IMAGE_EXT: Record<string, string> = { jpeg: 'jpg', png: 'png', webp: 'webp', avif: 'avif' };
+const IMAGE_MIME_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/avif': 'avif' };
+const IMAGE_ACCEPTED = Object.keys(IMAGE_MIME_EXT);
+
+function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
+  const [dragging, setDragging] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [quality, setQuality] = useState<QualityTier>('balanced');
+  const [format, setFormat] = useState<ImageFormat>('original');
+  const [compressing, setCompressing] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState('');
+  const [result, setResult] = useState<{ originalSize: number; compressedSize: number } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const IMAGE_COST = 3;
+
+  function pick(f: File | undefined) {
+    if (!f) return;
+    if (!IMAGE_ACCEPTED.includes(f.type)) { setError('Unsupported file. Use JPEG, PNG, WebP or AVIF.'); return; }
+    setFile(f); setError(''); setResult(null);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    pick(e.dataTransfer.files[0]);
+  }
+
+  async function compress() {
+    if (!file) return;
+    if (balance !== null && balance < IMAGE_COST) { onGoToCredits(); return; }
+    setCompressing(true);
+    setError('');
+    setResult(null);
+    setProgress('Uploading image...');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('quality', quality);
+      form.append('format', format);
+
+      setProgress('Compressing image...');
+
+      const res = await fetch('/api/image-compress', { method: 'POST', body: form });
+
+      if (res.status === 402) {
+        const d = await res.json() as { required: number; balance: number };
+        throw new Error(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
+      }
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || 'Compression failed');
+      }
+
+      const originalSize = Number(res.headers.get('X-Original-Size') ?? file.size);
+      const compressedSize = Number(res.headers.get('X-Compressed-Size') ?? 0);
+
+      setProgress('Preparing download...');
+      const blob = await res.blob();
+      const ext = format === 'original' ? (IMAGE_MIME_EXT[file.type] ?? 'jpg') : IMAGE_EXT[format];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name.replace(/\.[^.]+$/, '') + `-compressed.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setResult({ originalSize, compressedSize: compressedSize || blob.size });
+      setProgress('Done!');
+      setTimeout(() => setProgress(''), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Compression failed');
+      setProgress('');
+    } finally {
+      setCompressing(false);
+    }
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+
+      {/* Upload area */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Upload Image</h2>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+            dragging ? 'border-indigo-400 bg-indigo-50'
+            : file ? 'border-green-300 bg-green-50'
+            : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+          }`}
+        >
+          <input ref={inputRef} type="file" accept={IMAGE_ACCEPTED.join(',')} className="hidden" onChange={e => pick(e.target.files?.[0])} />
+          {file ? (
+            <>
+              <svg className="w-10 h-10 text-green-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-gray-800">{file.name}</p>
+              <p className="text-xs text-gray-400 mt-1">{formatBytes(file.size)}</p>
+              <button
+                onClick={e => { e.stopPropagation(); setFile(null); setError(''); setProgress(''); setResult(null); }}
+                className="mt-3 text-xs text-red-400 hover:text-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <p className="text-sm font-medium text-gray-600">Drop an image here, or <span className="text-indigo-500">browse</span></p>
+              <p className="text-xs text-gray-400 mt-1">JPEG, PNG, WebP, AVIF · max 25 MB</p>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Options */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Quality</h2>
+          <div className="flex gap-2">
+            {IMAGE_QUALITY_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setQuality(opt.value)}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
+                  quality === opt.value
+                    ? 'bg-indigo-500 text-white border-indigo-500'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300 hover:text-indigo-500'
+                }`}
+              >
+                <span className="block">{opt.label}</span>
+                <span className={`text-[11px] font-normal ${quality === opt.value ? 'text-indigo-100' : 'text-gray-400'}`}>{opt.desc}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Output Format</h2>
+          <div className="flex gap-2 flex-wrap">
+            {IMAGE_FORMAT_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFormat(opt.value)}
+                className={`flex-1 min-w-[80px] py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                  format === opt.value
+                    ? 'bg-indigo-500 text-white border-indigo-500'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300 hover:text-indigo-500'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Credit cost + compress button */}
+      <div className="space-y-2">
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < IMAGE_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        }`}>
+          Cost: {IMAGE_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+        {balance !== null && balance < IMAGE_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {IMAGE_COST - balance} more)
+          </button>
+        ) : (
+          <button
+            onClick={compress}
+            disabled={!file || compressing}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {compressing ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5M15 15l5.25 5.25" />
+              </svg>
+            )}
+            {compressing ? progress || 'Compressing...' : `Compress Image · ${IMAGE_COST} credits`}
           </button>
         )}
         {result && progress === 'Done!' && (
@@ -1325,6 +1559,7 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
     pdf_convert:    'PDF Convert',
     youtube_dl:     'YouTube',
     video_compress: 'Video Compress',
+    image_compress: 'Image Compress',
     refund:         'Refund',
   };
 
@@ -1342,6 +1577,7 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
           <p>PDF to PPTX — 10 credits</p>
           <p>YouTube download — 5 credits</p>
           <p>Video compress — 15 credits</p>
+          <p>Image compress — 3 credits</p>
         </div>
       </section>
 
@@ -1541,6 +1777,7 @@ export default function AppPage() {
           {activeTab === 'pdf-to-pptx' && <PdfToPptxTab {...tabProps} />}
           {activeTab === 'youtube' && <YoutubeTab {...tabProps} />}
           {activeTab === 'video-compress' && <VideoCompressTab {...tabProps} />}
+          {activeTab === 'image-compress' && <ImageCompressTab {...tabProps} />}
           {activeTab === 'credits' && <CreditsTab balance={balance} onBalanceRefresh={refreshBalance} />}
         </main>
 

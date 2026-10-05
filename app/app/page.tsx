@@ -914,16 +914,29 @@ function ImageConvertTab({ balance, onGoToCredits }: TabProps) {
       const res = await authFetch('/api/image-convert', { method: 'POST', body: form });
 
       if (res.status === 402) {
-        const d = await res.json() as { required: number; balance: number };
-        throw new Error(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
+        let reqCredits = CONVERT_COST;
+        let bal = balance ?? 0;
+        try {
+          const d = await res.json() as { required: number; balance: number };
+          reqCredits = d.required ?? reqCredits;
+          bal = d.balance ?? bal;
+        } catch {
+          // ignore json parse failure
+        }
+        throw new Error(`Not enough credits. Need ${reqCredits}, you have ${bal}.`);
       }
       if (!res.ok) {
         let msg = 'Conversion failed';
         try {
-          const errData = await res.json();
-          msg = errData.error || msg;
+          const raw = await res.text();
+          try {
+            const errData = JSON.parse(raw);
+            msg = errData.error || errData.message || raw || msg;
+          } catch {
+            msg = raw || msg;
+          }
         } catch {
-          msg = (await res.text()) || msg;
+          // fallback to default
         }
         throw new Error(msg);
       }

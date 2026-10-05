@@ -1,0 +1,9 @@
+# Production-ready Python Image Converter Dependencies
+
+# Core dependency (already present on system)
+Pillow>=10.0.0
+
+# Optional dependencies for extended format capabilities:
+# pillow-heif>=0.15.0       # High Efficiency Image (HEIC/HEIF) and AVIF support in Pillow
+# Wand>=0.6.13              # Python C-API binding for ImageMagick
+

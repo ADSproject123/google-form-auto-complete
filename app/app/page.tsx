@@ -8,7 +8,7 @@ import { authFetch, syncSessionCookie } from '@/src/lib/firebase/authSync';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
-type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'image-compress' | 'image-convert' | 'credits';
+type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'video-convert' | 'image-compress' | 'image-convert' | 'credits';
 
 type TabProps = { balance: number | null; onGoToCredits: () => void };
 
@@ -49,6 +49,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
     id: 'video-compress',
     label: 'Video Compress',
     icon: 'M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5M15 15l5.25 5.25',
+  },
+  {
+    id: 'video-convert',
+    label: 'Video Converter',
+    icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z',
   },
   {
     id: 'image-compress',
@@ -522,6 +527,369 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
         )}
       </div>
 
+    </div>
+  );
+}
+
+// ── Video Converter tab ────────────────────────────────────────────────────────
+type VideoConvertQuality = 'high' | 'balanced' | 'fast';
+type VideoResolution = 'original' | '1080p' | '720p' | '480p' | '360p';
+
+const POPULAR_VIDEO_CONVERT_FORMATS = [
+  { value: 'mp4',  label: 'MP4',  desc: 'Universal compatibility' },
+  { value: 'mkv',  label: 'MKV',  desc: 'High quality container' },
+  { value: 'webm', label: 'WEBM', desc: 'Modern web & streaming' },
+  { value: 'avi',  label: 'AVI',  desc: 'Classic Windows AVI' },
+  { value: 'mov',  label: 'MOV',  desc: 'Apple QuickTime' },
+  { value: 'wmv',  label: 'WMV',  desc: 'Windows Media Video' },
+  { value: 'm4v',  label: 'M4V',  desc: 'Apple iTunes format' },
+  { value: 'flv',  label: 'FLV',  desc: 'Adobe Flash video' },
+];
+
+const EXTENDED_VIDEO_CONVERT_FORMATS = [
+  { value: 'hevc',    label: 'HEVC / H.265 (High Efficiency)' },
+  { value: 'av1',     label: 'AV1 (Next-Gen Open Video)' },
+  { value: 'ogv',     label: 'OGV (Ogg Theora)' },
+  { value: '3gp',     label: '3GP (Mobile Video)' },
+  { value: '3g2',     label: '3G2 (Mobile 3GPP2)' },
+  { value: 'mpeg',    label: 'MPEG (MPEG-1 System)' },
+  { value: 'mpeg-2',  label: 'MPEG-2 (Broadcast Video)' },
+  { value: 'mpg',     label: 'MPG (MPEG Video)' },
+  { value: 'm2v',     label: 'M2V (MPEG-2 Video)' },
+  { value: 'ts',      label: 'TS (Transport Stream)' },
+  { value: 'mts',     label: 'MTS (AVCHD Camcorder)' },
+  { value: 'm2ts',    label: 'M2TS (Blu-ray Stream)' },
+  { value: 'avchd',   label: 'AVCHD (High-Def Video)' },
+  { value: 'vob',     label: 'VOB (DVD Video)' },
+  { value: 'divx',    label: 'DIVX (DivX Media)' },
+  { value: 'xvid',    label: 'XVID (Xvid MPEG-4)' },
+  { value: 'mjpeg',   label: 'MJPEG (Motion JPEG)' },
+  { value: 'mxf',     label: 'MXF (Material Exchange)' },
+  { value: 'swf',     label: 'SWF (Flash Movie)' },
+  { value: 'f4v',     label: 'F4V (Flash MP4)' },
+  { value: 'asf',     label: 'ASF (Advanced Systems)' },
+  { value: 'wtv',     label: 'WTV (Windows TV)' },
+  { value: 'rm',      label: 'RM (RealMedia)' },
+  { value: 'rmvb',    label: 'RMVB (RealMedia Variable Bitrate)' },
+];
+
+const VIDEO_RESOLUTION_OPTIONS: { value: VideoResolution; label: string }[] = [
+  { value: 'original', label: 'Original Resolution' },
+  { value: '1080p',    label: '1080p Full HD (1920×1080)' },
+  { value: '720p',     label: '720p HD (1280×720)' },
+  { value: '480p',     label: '480p SD (854×480)' },
+  { value: '360p',     label: '360p Mobile (640×360)' },
+];
+
+const VIDEO_QUALITY_OPTIONS: { value: VideoConvertQuality; label: string; desc: string }[] = [
+  { value: 'high',     label: 'High',     desc: 'Best visual quality' },
+  { value: 'balanced', label: 'Balanced', desc: 'Optimal size & speed' },
+  { value: 'fast',     label: 'Fast',     desc: 'Fastest conversion' },
+];
+
+function VideoConvertTab({ balance, onGoToCredits }: TabProps) {
+  const [dragging, setDragging] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [format, setFormat] = useState('mp4');
+  const [resolution, setResolution] = useState<VideoResolution>('original');
+  const [quality, setQuality] = useState<VideoConvertQuality>('balanced');
+  const [muteAudio, setMuteAudio] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState('');
+  const [result, setResult] = useState<{ originalSize: number; convertedSize: number; format: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const VIDEO_CONVERT_COST = 10;
+
+  function pick(f: File | undefined) {
+    if (!f) return;
+    setFile(f);
+    setError('');
+    setResult(null);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    pick(e.dataTransfer.files[0]);
+  }
+
+  async function convert() {
+    if (!file) return;
+    if (balance !== null && balance < VIDEO_CONVERT_COST) { onGoToCredits(); return; }
+
+    setConverting(true);
+    setError('');
+    setResult(null);
+    setProgress('Uploading video...');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('format', format);
+      form.append('resolution', resolution);
+      form.append('quality', quality);
+      if (muteAudio) {
+        form.append('muteAudio', 'true');
+      }
+
+      setProgress('Converting video (this may take a moment)...');
+      const res = await authFetch('/api/video-convert', { method: 'POST', body: form });
+
+      if (res.status === 402) {
+        let reqCredits = VIDEO_CONVERT_COST;
+        let bal = balance ?? 0;
+        try {
+          const raw = await res.text();
+          const d = JSON.parse(raw) as { required: number; balance: number };
+          reqCredits = d.required ?? reqCredits;
+          bal = d.balance ?? bal;
+        } catch {
+          // ignore json parse failure
+        }
+        throw new Error(`Not enough credits. Need ${reqCredits}, you have ${bal}.`);
+      }
+
+      if (!res.ok) {
+        let msg = 'Conversion failed';
+        try {
+          const raw = await res.text();
+          try {
+            const errData = JSON.parse(raw);
+            msg = errData.error || errData.message || raw || msg;
+          } catch {
+            msg = raw || msg;
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(msg);
+      }
+
+      const originalSize = Number(res.headers.get('X-Original-Size') ?? file.size);
+      const convertedSize = Number(res.headers.get('X-Converted-Size') ?? 0);
+      const outFormat = res.headers.get('X-Output-Format') || format.toUpperCase();
+
+      setProgress('Preparing download...');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stem = file.name.replace(/\.[^.]+$/, '');
+      const ext = format === 'mpeg-2' ? 'mpg' : format === 'avchd' ? 'm2ts' : format;
+      a.download = `${stem}-converted.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setResult({
+        originalSize,
+        convertedSize: convertedSize || blob.size,
+        format: outFormat,
+      });
+      setProgress('Done!');
+      setTimeout(() => setProgress(''), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Conversion failed');
+      setProgress('');
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  const isPopular = POPULAR_VIDEO_CONVERT_FORMATS.some(f => f.value === format);
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+      {/* Upload area */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Upload Video</h2>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            dragging
+              ? 'border-indigo-500 bg-indigo-50'
+              : 'border-gray-200 hover:border-gray-300 bg-gray-50/50'
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="video/*,.avi,.mov,.webm,.mpeg,.wmv,.mpg,.ogv,.mkv,.3gp,.hevc,.m4v,.mjpeg,.divx,.flv,.av1,.swf,.avchd,.vob,.ts,.xvid,.mxf,.rm,.mts,.f4v,.asf,.rmvb,.wtv,.3g2,.m2v,.m2ts,.mp4"
+            className="hidden"
+            onChange={e => pick(e.target.files?.[0])}
+          />
+          {file ? (
+            <>
+              <svg className="w-10 h-10 text-green-500 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-gray-800">{file.name}</p>
+              <p className="text-xs text-gray-400 mt-1">{formatBytes(file.size)}</p>
+              <button
+                onClick={e => { e.stopPropagation(); setFile(null); setError(''); setProgress(''); setResult(null); }}
+                className="mt-3 text-xs text-red-400 hover:text-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <svg className="w-10 h-10 text-gray-300 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.869A1 1 0 0121 8.054v7.892a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              </svg>
+              <p className="text-sm font-medium text-gray-600">Drop a video here, or <span className="text-indigo-500">browse</span></p>
+              <p className="text-xs text-gray-400 mt-1">Supports MP4, MKV, AVI, MOV, WEBM, FLV, AV1, and 30+ formats (up to 500 MB)</p>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Target Format Options */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Target Format</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {POPULAR_VIDEO_CONVERT_FORMATS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFormat(opt.value)}
+                className={`p-3 rounded-lg border text-left transition-colors ${
+                  format === opt.value
+                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                    : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300'
+                }`}
+              >
+                <p className="text-sm font-bold">{opt.label}</p>
+                <p className="text-[11px] text-gray-400 leading-tight mt-0.5">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+
+          {/* More formats dropdown */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-gray-400">Other formats:</span>
+            <select
+              value={isPopular ? '' : format}
+              onChange={e => { if (e.target.value) setFormat(e.target.value); }}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="" disabled={!isPopular}>
+                {isPopular ? 'Select more formats...' : `Selected: ${format.toUpperCase()}`}
+              </option>
+              {EXTENDED_VIDEO_CONVERT_FORMATS.map(f => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Video conversion settings */}
+        <div className="pt-4 border-t border-gray-100 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Resolution</label>
+            <select
+              value={resolution}
+              onChange={e => setResolution(e.target.value as VideoResolution)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:outline-none focus:border-indigo-500"
+            >
+              {VIDEO_RESOLUTION_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Quality &amp; Speed</label>
+            <div className="grid grid-cols-3 gap-2">
+              {VIDEO_QUALITY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setQuality(opt.value)}
+                  className={`p-2.5 rounded-lg border text-left transition-colors ${
+                    quality === opt.value
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                      : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300'
+                  }`}
+                >
+                  <p className="text-xs font-bold">{opt.label}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={muteAudio}
+                onChange={e => setMuteAudio(e.target.checked)}
+                className="accent-indigo-500 rounded"
+              />
+              <span className="text-xs text-gray-700 font-medium">Mute / remove audio track</span>
+            </label>
+            <p className="text-[11px] text-gray-400 mt-1">
+              Produces a video-only stream (useful for B-roll, presentations, or background loops).
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Credit cost & action button */}
+      <div className="space-y-2">
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < VIDEO_CONVERT_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        }`}>
+          Cost: {VIDEO_CONVERT_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+
+        {balance !== null && balance < VIDEO_CONVERT_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {VIDEO_CONVERT_COST - balance} more)
+          </button>
+        ) : (
+          <button
+            onClick={convert}
+            disabled={!file || converting}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {converting ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+              </svg>
+            )}
+            {converting ? progress || 'Converting...' : `Convert to ${format.toUpperCase()} · ${VIDEO_CONVERT_COST} credits`}
+          </button>
+        )}
+
+        {result && progress === 'Done!' && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center space-y-1">
+            <p className="text-xs text-green-700 font-bold">
+              ✓ Successfully converted to {result.format}!
+            </p>
+            <p className="text-xs text-green-600">
+              {formatBytes(result.originalSize)} → {formatBytes(result.convertedSize)}
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <p className="text-center text-xs text-red-500">{error}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -2304,6 +2672,7 @@ export default function AppPage() {
           {activeTab === 'pdf-to-pptx' && <PdfToPptxTab {...tabProps} />}
           {activeTab === 'youtube' && <YoutubeTab {...tabProps} />}
           {activeTab === 'video-compress' && <VideoCompressTab {...tabProps} />}
+          {activeTab === 'video-convert' && <VideoConvertTab {...tabProps} />}
           {activeTab === 'image-compress' && <ImageCompressTab {...tabProps} />}
           {activeTab === 'image-convert' && <ImageConvertTab {...tabProps} />}
           {activeTab === 'credits' && <CreditsTab balance={balance} onBalanceRefresh={refreshBalance} />}

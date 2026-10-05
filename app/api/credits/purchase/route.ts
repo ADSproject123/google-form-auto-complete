@@ -5,11 +5,25 @@ import { CREDIT_PACKAGES, saveOrderToDb } from '@/src/credits';
 import { orders } from '@/src/store';
 import { createCreditPurchaseIntent } from '@/src/payment';
 
-export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const dynamic = 'force-dynamic';
 
-  const body = await req.json() as { packageId?: string; credits?: number };
+export async function POST(req: NextRequest) {
+  try {
+    return await handlePurchase(req);
+  } catch (err) {
+    console.error('[credits/purchase] unhandled error:', err);
+    return NextResponse.json(
+      { error: `Server error: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    );
+  }
+}
+
+async function handlePurchase(req: NextRequest) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized — please sign in again.' }, { status: 401 });
+
+  const body = await req.json().catch(() => ({})) as { packageId?: string; credits?: number };
 
   // Resolve credits and price — either from a preset package or a custom amount
   let credits: number;

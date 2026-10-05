@@ -1516,17 +1516,29 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function buyPackage(packageId: string) {
-    setBuying(packageId);
+  async function startPurchase(payload: { packageId: string } | { credits: number }, key: string) {
+    setBuying(key);
     try {
       const res = await fetch('/api/credits/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageId }),
+        body: JSON.stringify(payload),
       });
-      const data = await res.json() as { checkoutUrl?: string; error?: string };
-      if (!res.ok) { alert(data.error ?? 'Failed to create payment'); return; }
-      window.location.href = data.checkoutUrl!;
+      const raw = await res.text();
+      let data: { checkoutUrl?: string; error?: string } = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        // Server returned HTML (crash, redirect, or expired session)
+        alert(
+          res.status === 401 || res.redirected
+            ? 'Your session has expired. Please sign in again.'
+            : `Payment request failed (HTTP ${res.status}). Please try again, or contact support if it keeps happening.`,
+        );
+        return;
+      }
+      if (!res.ok || !data.checkoutUrl) { alert(data.error ?? 'Failed to create payment'); return; }
+      window.location.href = data.checkoutUrl;
     } catch (err) {
       alert(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1534,23 +1546,13 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
     }
   }
 
-  async function buyCustom() {
+  function buyPackage(packageId: string) {
+    return startPurchase({ packageId }, packageId);
+  }
+
+  function buyCustom() {
     const credits = Math.max(1, Math.floor(customCredits));
-    setBuying('custom');
-    try {
-      const res = await fetch('/api/credits/purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credits }),
-      });
-      const data = await res.json() as { checkoutUrl?: string; error?: string };
-      if (!res.ok) { alert(data.error ?? 'Failed to create payment'); return; }
-      window.location.href = data.checkoutUrl!;
-    } catch (err) {
-      alert(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBuying(null);
-    }
+    return startPurchase({ credits }, 'custom');
   }
 
   const kindLabel: Record<string, string> = {

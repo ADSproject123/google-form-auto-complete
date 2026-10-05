@@ -1,3 +1,4 @@
+import type { CollectionReference } from 'firebase-admin/firestore';
 import { adminDb } from '@/src/lib/firebase/admin';
 import { getCurrentUser } from '@/src/lib/firebase/server';
 
@@ -19,9 +20,20 @@ export const CREDIT_PACKAGES = [
 
 export type PackageId = typeof CREDIT_PACKAGES[number]['id'];
 
-const userCredits = adminDb.collection('user_credits');
-const creditTransactions = adminDb.collection('credit_transactions');
-const pendingCreditOrders = adminDb.collection('pending_credit_orders');
+// Resolved on first use so a Firebase Admin config problem doesn't crash module loading
+function lazyCollection(name: string): CollectionReference {
+  return new Proxy({} as CollectionReference, {
+    get(_target, prop) {
+      const col = adminDb.collection(name) as unknown as Record<string | symbol, unknown>;
+      const value = col[prop];
+      return typeof value === 'function' ? value.bind(col) : value;
+    },
+  });
+}
+
+const userCredits = lazyCollection('user_credits');
+const creditTransactions = lazyCollection('credit_transactions');
+const pendingCreditOrders = lazyCollection('pending_credit_orders');
 
 export async function getBalance(userId: string): Promise<number> {
   const doc = await userCredits.doc(userId).get();

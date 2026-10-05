@@ -10,7 +10,8 @@ export async function getCurrentUser(): Promise<{ uid: string; email: string | n
   try {
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
     return { uid: decoded.uid, email: decoded.email ?? null };
-  } catch {
+  } catch (err) {
+    console.error('[getCurrentUser] session verification failed:', err instanceof Error ? err.message : err);
     return null;
   }
 }

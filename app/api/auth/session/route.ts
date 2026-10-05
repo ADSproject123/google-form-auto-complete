@@ -21,7 +21,12 @@ export async function POST(req: NextRequest) {
       path: '/',
     });
     return res;
-  } catch {
+  } catch (err) {
+    console.error('[auth/session] failed:', err);
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.startsWith('Firebase Admin')) {
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
     return NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
   }
 }

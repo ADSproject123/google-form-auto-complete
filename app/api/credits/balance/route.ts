@@ -10,7 +10,10 @@ export async function GET() {
 
   const [balance, transactions] = await Promise.all([
     getBalance(user.uid),
-    getTransactions(user.uid),
+    getTransactions(user.uid).catch(err => {
+      console.error('[credits/balance] transaction history query failed:', err);
+      return [];
+    }),
   ]);
 
   return NextResponse.json({ balance, transactions });

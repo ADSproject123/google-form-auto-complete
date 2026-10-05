@@ -8,7 +8,7 @@ import { authFetch, syncSessionCookie } from '@/src/lib/firebase/authSync';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
-type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'image-compress' | 'credits';
+type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'image-compress' | 'image-convert' | 'credits';
 
 type TabProps = { balance: number | null; onGoToCredits: () => void };
 
@@ -54,6 +54,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
     id: 'image-compress',
     label: 'Image Compress',
     icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z',
+  },
+  {
+    id: 'image-convert',
+    label: 'Image Converter',
+    icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
   },
   {
     id: 'credits',
@@ -821,6 +826,346 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
         )}
       </div>
 
+    </div>
+  );
+}
+
+// ── Image Converter tab ────────────────────────────────────────────────────────
+const POPULAR_CONVERT_FORMATS = [
+  { value: 'webp', label: 'WebP', desc: 'Modern web format' },
+  { value: 'png',  label: 'PNG',  desc: 'Lossless + alpha' },
+  { value: 'jpeg', label: 'JPEG', desc: 'Universal photo' },
+  { value: 'svg',  label: 'SVG',  desc: 'Vector graphics' },
+  { value: 'ico',  label: 'ICO',  desc: 'Windows icon' },
+  { value: 'bmp',  label: 'BMP',  desc: 'Bitmap image' },
+  { value: 'tiff', label: 'TIFF', desc: 'High-res print' },
+  { value: 'gif',  label: 'GIF',  desc: 'Animated / palette' },
+];
+
+const EXTENDED_CONVERT_FORMATS = [
+  { value: 'tga',  label: 'TGA (Truevision Targa)' },
+  { value: 'dds',  label: 'DDS (DirectDraw Surface)' },
+  { value: 'ppm',  label: 'PPM (Portable Pixmap)' },
+  { value: 'pgm',  label: 'PGM (Portable Graymap)' },
+  { value: 'pbm',  label: 'PBM (Portable Bitmap)' },
+  { value: 'pcx',  label: 'PCX (PC Paintbrush)' },
+  { value: 'sgi',  label: 'SGI (Silicon Graphics)' },
+  { value: 'xbm',  label: 'XBM (X BitMap)' },
+  { value: 'palm', label: 'PALM (Palm Pixmap)' },
+  { value: 'jp2',  label: 'JP2 (JPEG 2000)' },
+  { value: 'cur',  label: 'CUR (Windows Cursor)' },
+];
+
+function ImageConvertTab({ balance, onGoToCredits }: TabProps) {
+  const [dragging, setDragging] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [format, setFormat] = useState('webp');
+  const [quality, setQuality] = useState(90);
+  const [background, setBackground] = useState('#FFFFFF');
+  const [vectorize, setVectorize] = useState(false);
+  const [lossless, setLossless] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState('');
+  const [result, setResult] = useState<{ originalSize: number; convertedSize: number; dimensions?: string; format: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const CONVERT_COST = 3;
+
+  function pick(f: File | undefined) {
+    if (!f) return;
+    setFile(f);
+    setError('');
+    setResult(null);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    pick(e.dataTransfer.files[0]);
+  }
+
+  async function convert() {
+    if (!file) return;
+    if (balance !== null && balance < CONVERT_COST) { onGoToCredits(); return; }
+
+    setConverting(true);
+    setError('');
+    setResult(null);
+    setProgress('Uploading image...');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('format', format);
+      if (['jpeg', 'webp'].includes(format)) {
+        form.append('quality', String(quality));
+      }
+      if (format === 'webp' && lossless) {
+        form.append('lossless', 'true');
+      }
+      if (['jpeg', 'bmp', 'ppm', 'pcx'].includes(format)) {
+        form.append('background', background);
+      }
+      if (format === 'svg' && vectorize) {
+        form.append('vectorize', 'true');
+      }
+
+      setProgress('Converting format...');
+      const res = await authFetch('/api/image-convert', { method: 'POST', body: form });
+
+      if (res.status === 402) {
+        const d = await res.json() as { required: number; balance: number };
+        throw new Error(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
+      }
+      if (!res.ok) {
+        let msg = 'Conversion failed';
+        try {
+          const errData = await res.json();
+          msg = errData.error || msg;
+        } catch {
+          msg = (await res.text()) || msg;
+        }
+        throw new Error(msg);
+      }
+
+      const originalSize = Number(res.headers.get('X-Original-Size') ?? file.size);
+      const convertedSize = Number(res.headers.get('X-Converted-Size') ?? 0);
+      const dimensions = res.headers.get('X-Dimensions') || '';
+
+      setProgress('Preparing download...');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stem = file.name.replace(/\.[^.]+$/, '');
+      a.download = `${stem}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setResult({
+        originalSize,
+        convertedSize: convertedSize || blob.size,
+        dimensions,
+        format: format.toUpperCase(),
+      });
+      setProgress('Done!');
+      setTimeout(() => setProgress(''), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Conversion failed');
+      setProgress('');
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  const isPopular = POPULAR_CONVERT_FORMATS.some(f => f.value === format);
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+      {/* Upload area */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Upload Image</h2>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            dragging
+              ? 'border-indigo-500 bg-indigo-50'
+              : 'border-gray-200 hover:border-gray-300 bg-gray-50/50'
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,.png,.jpg,.jpeg,.webp,.svg,.ico,.bmp,.tiff,.gif,.tga,.dds,.ppm,.pgm,.pbm,.pcx,.sgi,.xbm,.palm,.jp2"
+            className="hidden"
+            onChange={e => pick(e.target.files?.[0])}
+          />
+          {file ? (
+            <>
+              <svg className="w-10 h-10 text-green-500 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-gray-800">{file.name}</p>
+              <p className="text-xs text-gray-400 mt-1">{formatBytes(file.size)}</p>
+              <button
+                onClick={e => { e.stopPropagation(); setFile(null); setError(''); setProgress(''); setResult(null); }}
+                className="mt-3 text-xs text-red-400 hover:text-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <svg className="w-10 h-10 text-gray-300 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <p className="text-sm font-medium text-gray-600">Drop an image here, or <span className="text-indigo-500">browse</span></p>
+              <p className="text-xs text-gray-400 mt-1">Supports PNG, JPG, WebP, SVG, ICO, BMP, TIFF, GIF, and 60+ formats</p>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Target Format Options */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Target Format</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {POPULAR_CONVERT_FORMATS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFormat(opt.value)}
+                className={`p-3 rounded-lg border text-left transition-colors ${
+                  format === opt.value
+                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                    : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300'
+                }`}
+              >
+                <p className="text-sm font-bold">{opt.label}</p>
+                <p className="text-[11px] text-gray-400 leading-tight mt-0.5">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+
+          {/* More formats dropdown */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-gray-400">Other formats:</span>
+            <select
+              value={isPopular ? '' : format}
+              onChange={e => { if (e.target.value) setFormat(e.target.value); }}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="" disabled={!isPopular}>
+                {isPopular ? 'Select more formats...' : `Selected: ${format.toUpperCase()}`}
+              </option>
+              {EXTENDED_CONVERT_FORMATS.map(f => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Dynamic conversion settings */}
+        {['jpeg', 'webp'].includes(format) && (
+          <div className="pt-4 border-t border-gray-100">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-gray-600 uppercase">Quality</label>
+              <span className="text-xs font-bold text-indigo-600">{quality}%</span>
+            </div>
+            <input
+              type="range"
+              min="10"
+              max="100"
+              value={quality}
+              onChange={e => setQuality(Number(e.target.value))}
+              className="w-full accent-indigo-500 h-1.5 bg-gray-200 rounded-lg cursor-pointer"
+            />
+          </div>
+        )}
+
+        {format === 'webp' && (
+          <label className="flex items-center gap-2 cursor-pointer pt-2">
+            <input
+              type="checkbox"
+              checked={lossless}
+              onChange={e => setLossless(e.target.checked)}
+              className="accent-indigo-500 rounded"
+            />
+            <span className="text-xs text-gray-700 font-medium">Lossless WebP compression</span>
+          </label>
+        )}
+
+        {['jpeg', 'bmp', 'ppm', 'pcx'].includes(format) && (
+          <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-gray-600 uppercase">Background Color</p>
+              <p className="text-[11px] text-gray-400">For transparent pixels (JPEG/BMP don't support alpha)</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={background}
+                onChange={e => setBackground(e.target.value)}
+                className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0.5"
+              />
+              <span className="text-xs font-mono text-gray-600">{background}</span>
+            </div>
+          </div>
+        )}
+
+        {format === 'svg' && (
+          <div className="pt-4 border-t border-gray-100">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vectorize}
+                onChange={e => setVectorize(e.target.checked)}
+                className="accent-indigo-500 rounded"
+              />
+              <span className="text-xs text-gray-700 font-medium">True vector tracing (requires server potrace)</span>
+            </label>
+            <p className="text-[11px] text-gray-400 mt-1">
+              By default, SVG embeds raster as base64 for 100% pixel-perfect vector wrapping.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Credit cost & action button */}
+      <div className="space-y-2">
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < CONVERT_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        }`}>
+          Cost: {CONVERT_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+
+        {balance !== null && balance < CONVERT_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {CONVERT_COST - balance} more)
+          </button>
+        ) : (
+          <button
+            onClick={convert}
+            disabled={!file || converting}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {converting ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+            {converting ? progress || 'Converting...' : `Convert to ${format.toUpperCase()} · ${CONVERT_COST} credits`}
+          </button>
+        )}
+
+        {result && progress === 'Done!' && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center space-y-1">
+            <p className="text-xs text-green-700 font-bold">
+              ✓ Successfully converted to {result.format}!
+            </p>
+            <p className="text-xs text-green-600">
+              {formatBytes(result.originalSize)} → {formatBytes(result.convertedSize)}
+              {result.dimensions ? ` (${result.dimensions})` : ''}
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <p className="text-center text-xs text-red-500">{error}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -1947,6 +2292,7 @@ export default function AppPage() {
           {activeTab === 'youtube' && <YoutubeTab {...tabProps} />}
           {activeTab === 'video-compress' && <VideoCompressTab {...tabProps} />}
           {activeTab === 'image-compress' && <ImageCompressTab {...tabProps} />}
+          {activeTab === 'image-convert' && <ImageConvertTab {...tabProps} />}
           {activeTab === 'credits' && <CreditsTab balance={balance} onBalanceRefresh={refreshBalance} />}
         </main>
 

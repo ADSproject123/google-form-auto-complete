@@ -18,3 +18,10 @@ out/
 *.prettiercache
 .vercel
 .env*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/

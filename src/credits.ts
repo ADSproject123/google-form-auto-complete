@@ -8,6 +8,7 @@ export const CREDIT_COSTS = {
   youtube_dl:     5,
   video_compress: 15,
   image_compress: 3,
+  image_convert:  3,
 } as const;
 
 export type CreditKind = keyof typeof CREDIT_COSTS | 'purchase' | 'refund';

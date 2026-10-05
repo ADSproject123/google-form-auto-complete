@@ -246,12 +246,13 @@ function PdfToPptxTab({ balance, onGoToCredits }: TabProps) {
 }
 
 // ── Video Compress tab ─────────────────────────────────────────────────────────
-type QualityTier = 'high' | 'balanced' | 'small';
+type QualityTier = 'high' | 'balanced' | 'small' | 'custom';
 
 const QUALITY_OPTIONS: { value: QualityTier; label: string; desc: string }[] = [
   { value: 'high', label: 'High Quality', desc: 'Best quality' },
   { value: 'balanced', label: 'Balanced', desc: 'Up to 1080p' },
   { value: 'small', label: 'Small File', desc: 'Up to 720p' },
+  { value: 'custom', label: 'Custom Size', desc: 'Target MB' },
 ];
 
 function formatBytes(bytes: number) {
@@ -263,6 +264,7 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [quality, setQuality] = useState<QualityTier>('balanced');
+  const [targetMb, setTargetMb] = useState<string>('10');
   const [compressing, setCompressing] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
@@ -270,21 +272,46 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const VIDEO_COST = 15;
 
+  function onFileSelected(f: File) {
+    setFile(f);
+    setError('');
+    setResult(null);
+    const approx = Math.max(0.5, Math.round((f.size / (1024 * 1024) * 0.5) * 10) / 10);
+    setTargetMb(String(approx));
+  }
+
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragging(false);
     const dropped = e.dataTransfer.files[0];
-    if (dropped?.type.startsWith('video/')) { setFile(dropped); setError(''); setResult(null); }
+    if (dropped?.type.startsWith('video/')) {
+      onFileSelected(dropped);
+    }
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = e.target.files?.[0];
-    if (picked) { setFile(picked); setError(''); setResult(null); }
+    if (picked) {
+      onFileSelected(picked);
+    }
   }
 
   async function compress() {
     if (!file) return;
     if (balance !== null && balance < VIDEO_COST) { onGoToCredits(); return; }
+
+    if (quality === 'custom') {
+      const mb = parseFloat(targetMb);
+      if (!Number.isFinite(mb) || mb < 0.5) {
+        setError('Target size must be at least 0.5 MB.');
+        return;
+      }
+      if (mb * 1024 * 1024 >= file.size) {
+        setError('Target size must be smaller than the original file size.');
+        return;
+      }
+    }
+
     setCompressing(true);
     setError('');
     setResult(null);
@@ -294,6 +321,9 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
       const form = new FormData();
       form.append('file', file);
       form.append('quality', quality);
+      if (quality === 'custom') {
+        form.append('targetMb', targetMb);
+      }
 
       setProgress('Compressing video (this may take a while)...');
 
@@ -395,6 +425,36 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
             </button>
           ))}
         </div>
+
+        {quality === 'custom' && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+              Target Video File Size
+            </label>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.5"
+                  value={targetMb}
+                  onChange={e => setTargetMb(e.target.value)}
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="10"
+                />
+              </div>
+              <span className="text-sm font-medium text-gray-600">MB</span>
+              {file && (
+                <span className="text-xs text-gray-500">
+                  (Original: <span className="font-semibold text-gray-700">{formatBytes(file.size)}</span>)
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              Target bitrate will be dynamically calculated. Note: Minimum 0.5 MB and must be smaller than the original.
+            </p>
+          </div>
+        )}
       </section>
 
       {/* Credit cost + compress button */}
@@ -451,6 +511,7 @@ const IMAGE_QUALITY_OPTIONS: { value: QualityTier; label: string; desc: string }
   { value: 'high', label: 'High Quality', desc: 'Original size' },
   { value: 'balanced', label: 'Balanced', desc: 'Up to 2560px' },
   { value: 'small', label: 'Small File', desc: 'Up to 1600px' },
+  { value: 'custom', label: 'Custom Size', desc: 'Target KB / MB' },
 ];
 
 const IMAGE_FORMAT_OPTIONS: { value: ImageFormat; label: string }[] = [
@@ -469,6 +530,8 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [quality, setQuality] = useState<QualityTier>('balanced');
+  const [targetSize, setTargetSize] = useState<string>('500');
+  const [targetUnit, setTargetUnit] = useState<'KB' | 'MB'>('KB');
   const [format, setFormat] = useState<ImageFormat>('original');
   const [compressing, setCompressing] = useState(false);
   const [error, setError] = useState('');
@@ -480,7 +543,17 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
   function pick(f: File | undefined) {
     if (!f) return;
     if (!IMAGE_ACCEPTED.includes(f.type)) { setError('Unsupported file. Use JPEG, PNG, WebP or AVIF.'); return; }
-    setFile(f); setError(''); setResult(null);
+    setFile(f);
+    setError('');
+    setResult(null);
+    const half = f.size * 0.5;
+    if (half >= 1024 * 1024) {
+      setTargetUnit('MB');
+      setTargetSize(Math.max(0.1, Math.round((half / (1024 * 1024)) * 10) / 10).toString());
+    } else {
+      setTargetUnit('KB');
+      setTargetSize(Math.max(10, Math.round(half / 1024)).toString());
+    }
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -492,6 +565,20 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
   async function compress() {
     if (!file) return;
     if (balance !== null && balance < IMAGE_COST) { onGoToCredits(); return; }
+
+    if (quality === 'custom') {
+      const val = parseFloat(targetSize);
+      const kb = targetUnit === 'MB' ? val * 1024 : val;
+      if (!Number.isFinite(kb) || kb < 5) {
+        setError('Target size must be at least 5 KB.');
+        return;
+      }
+      if (kb * 1024 >= file.size) {
+        setError('Target size must be smaller than the original file size.');
+        return;
+      }
+    }
+
     setCompressing(true);
     setError('');
     setResult(null);
@@ -502,6 +589,11 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
       form.append('file', file);
       form.append('quality', quality);
       form.append('format', format);
+      if (quality === 'custom') {
+        const val = parseFloat(targetSize);
+        const kb = targetUnit === 'MB' ? val * 1024 : val;
+        form.append('targetKb', String(kb));
+      }
 
       setProgress('Compressing image...');
 
@@ -605,6 +697,49 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
               </button>
             ))}
           </div>
+
+          {quality === 'custom' && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                Target Image File Size
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  step={targetUnit === 'MB' ? '0.1' : '10'}
+                  min={targetUnit === 'MB' ? '0.01' : '5'}
+                  value={targetSize}
+                  onChange={e => setTargetSize(e.target.value)}
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder={targetUnit === 'MB' ? '1' : '500'}
+                />
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => setTargetUnit('KB')}
+                    className={`px-3 py-2 font-semibold transition-colors ${targetUnit === 'KB' ? 'bg-indigo-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                  >
+                    KB
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetUnit('MB')}
+                    className={`px-3 py-2 font-semibold transition-colors ${targetUnit === 'MB' ? 'bg-indigo-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                  >
+                    MB
+                  </button>
+                </div>
+                {file && (
+                  <span className="text-xs text-gray-500">
+                    (Original: <span className="font-semibold text-gray-700">{formatBytes(file.size)}</span>)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                Quality and dimensions are optimized automatically to reach or stay under your target size.
+              </p>
+            </div>
+          )}
         </div>
         <div>
           <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Output Format</h2>

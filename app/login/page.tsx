@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, type AuthError } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, type AuthError } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase/client';
 
 function LoginForm() {
@@ -25,6 +25,15 @@ function LoginForm() {
     router.push(next);
     router.refresh();
   }
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        await establishSession(searchParams.get('next') ?? '/app');
+      }
+    });
+    return () => unsubscribe();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function friendlyAuthError(err: unknown): string {
     const code = (err as AuthError)?.code ?? '';

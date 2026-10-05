@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut as firebaseSignOut } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase/client';
+import { authFetch } from '@/src/lib/firebase/authSync';
 
 interface Order {
   id: string;
@@ -64,7 +65,7 @@ export default function PaymentSuccessPage() {
 
   async function pollOrder(orderId: string) {
     try {
-      const res = await fetch(`/api/orders/${orderId}`);
+      const res = await authFetch(`/api/orders/${orderId}`);
       if (!res.ok) { setPhase('error'); setErrorMsg('Order not found. Please contact support.'); return; }
       const data: Order = await res.json();
       if (data.paid && data.jobId) {
@@ -107,7 +108,7 @@ export default function PaymentSuccessPage() {
   }
 
   function startStream(jobId: string) {
-    fetch(`/api/jobs/${jobId}`)
+    authFetch(`/api/jobs/${jobId}`)
       .then(r => r.json())
       .then((job: { done: number; total: number }) => setProgress({ done: job.done, total: job.total }))
       .catch(() => {});

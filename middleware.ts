@@ -1,17 +1,20 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from '@/src/lib/firebase/constants';
 
-const PUBLIC_PATHS = ['/', '/login', '/auth/', '/app'];
-const WEBHOOK_PATH = '/api/webhook/';
+const EXACT_PUBLIC_PATHS = ['/'];
+const PREFIX_PUBLIC_PATHS = ['/login', '/api/auth/', '/api/webhook/', '/app'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isPublic =
-    PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
-    pathname.startsWith(WEBHOOK_PATH);
+    EXACT_PUBLIC_PATHS.includes(pathname) ||
+    PREFIX_PUBLIC_PATHS.some(p => pathname.startsWith(p));
 
-  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
+  const hasSession = Boolean(
+    request.cookies.get(SESSION_COOKIE)?.value ||
+    request.headers.get('authorization')?.startsWith('Bearer ')
+  );
 
   if (!hasSession && !isPublic) {
     if (pathname.startsWith('/api/')) {

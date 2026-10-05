@@ -2,8 +2,9 @@
 
 import { useState, useReducer, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { onAuthStateChanged, signOut as firebaseSignOut, type User } from 'firebase/auth';
+import { onAuthStateChanged, onIdTokenChanged, signOut as firebaseSignOut, type User } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase/client';
+import { authFetch, syncSessionCookie } from '@/src/lib/firebase/authSync';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
@@ -98,7 +99,7 @@ function PdfToPptxTab({ balance, onGoToCredits }: TabProps) {
 
       setProgress('Converting pages to slides...');
 
-      const res = await fetch('/api/pdf-to-pptx', { method: 'POST', body: form });
+      const res = await authFetch('/api/pdf-to-pptx', { method: 'POST', body: form });
 
       if (res.status === 402) {
         const d = await res.json() as { required: number; balance: number };
@@ -327,7 +328,7 @@ function VideoCompressTab({ balance, onGoToCredits }: TabProps) {
 
       setProgress('Compressing video (this may take a while)...');
 
-      const res = await fetch('/api/video-compress', { method: 'POST', body: form });
+      const res = await authFetch('/api/video-compress', { method: 'POST', body: form });
 
       if (res.status === 402) {
         const d = await res.json() as { required: number; balance: number };
@@ -597,7 +598,7 @@ function ImageCompressTab({ balance, onGoToCredits }: TabProps) {
 
       setProgress('Compressing image...');
 
-      const res = await fetch('/api/image-compress', { method: 'POST', body: form });
+      const res = await authFetch('/api/image-compress', { method: 'POST', body: form });
 
       if (res.status === 402) {
         const d = await res.json() as { required: number; balance: number };
@@ -843,7 +844,7 @@ function YoutubeTab({ balance, onGoToCredits }: TabProps) {
     setFetchError('');
     setInfo(null);
     try {
-      const res = await fetch(`/api/youtube/info?url=${encodeURIComponent(trimmed)}`);
+      const res = await authFetch(`/api/youtube/info?url=${encodeURIComponent(trimmed)}`);
       const data = await res.json() as VideoInfo & { error?: string };
       if (!res.ok) throw new Error(data.error ?? 'Failed to fetch');
       setInfo(data);
@@ -861,7 +862,7 @@ function YoutubeTab({ balance, onGoToCredits }: TabProps) {
     setDownloading(true);
     try {
       const params = new URLSearchParams({ url: url.trim(), format, quality });
-      const res = await fetch(`/api/youtube/download?${params}`);
+      const res = await authFetch(`/api/youtube/download?${params}`);
       if (res.status === 402) {
         const d = await res.json() as { required: number; balance: number };
         alert(`Not enough credits. Need ${d.required}, you have ${d.balance}.`);
@@ -1129,7 +1130,7 @@ function FormFillerTab({ balance, onGoToCredits }: TabProps) {
     setInspecting(true);
     setStatusText('Opening form in headless browser...'); setStatusType('info');
     try {
-      const res = await fetch('/api/inspect', {
+      const res = await authFetch('/api/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: formUrl }),
@@ -1164,7 +1165,7 @@ function FormFillerTab({ balance, onGoToCredits }: TabProps) {
     setPayBtnDisabled(true);
     setPayBtnText('Starting...');
     try {
-      const res = await fetch('/api/jobs/submit', {
+      const res = await authFetch('/api/jobs/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1605,7 +1606,7 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
   const [customCredits, setCustomCredits] = useState(10);
 
   function reloadTransactions() {
-    fetch('/api/credits/balance')
+    authFetch('/api/credits/balance')
       .then(r => r.json())
       .then((d: { transactions?: CreditTransaction[] }) => { if (d.transactions) setTransactions(d.transactions); })
       .catch(() => {});
@@ -1616,7 +1617,7 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
     for (let attempt = 0; attempt < 10; attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
       try {
-        const res = await fetch(`/api/orders/${orderId}`);
+        const res = await authFetch(`/api/orders/${orderId}`);
         if (!res.ok) break;
         const data = await res.json() as { paid: boolean; creditsToAdd?: number };
         if (data.paid) {
@@ -1654,7 +1655,7 @@ function CreditsTab({ balance, onBalanceRefresh }: { balance: number | null; onB
   async function startPurchase(payload: { packageId: string } | { credits: number }, key: string) {
     setBuying(key);
     try {
-      const res = await fetch('/api/credits/purchase', {
+      const res = await authFetch('/api/credits/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1812,7 +1813,7 @@ export default function AppPage() {
   const router = useRouter();
 
   async function refreshBalance() {
-    const res = await fetch('/api/credits/balance');
+    const res = await authFetch('/api/credits/balance');
     if (res.ok) {
       const data = await res.json() as { balance: number };
       setBalance(data.balance);
@@ -1820,17 +1821,32 @@ export default function AppPage() {
   }
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
-      if (firebaseUser) refreshBalance();
-      else setBalance(null);
+      if (firebaseUser) {
+        // Ensure server session cookie is active and continually rolled forward
+        await syncSessionCookie(firebaseUser);
+        refreshBalance();
+      } else {
+        setBalance(null);
+      }
     });
+
+    // Periodically refresh/extend session cookie every 15 minutes while tab is open
+    const interval = setInterval(() => {
+      if (auth.currentUser) {
+        syncSessionCookie(auth.currentUser);
+      }
+    }, 15 * 60 * 1000);
 
     // Handle return from credit purchase (?tab=credits)
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') === 'credits') setActiveTab('credits');
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signOut() {

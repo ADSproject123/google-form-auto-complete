@@ -8,7 +8,7 @@ import { authFetch, syncSessionCookie } from '@/src/lib/firebase/authSync';
 import type { FormField, UIFieldConfig, AnswerMode } from '@/src/types';
 
 type Profile = { id: number; name: string; percentage: number; description: string };
-type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'video-convert' | 'image-compress' | 'image-convert' | 'credits';
+type Tab = 'form-filler' | 'pdf-to-pptx' | 'youtube' | 'video-compress' | 'video-convert' | 'video-to-gif' | 'image-compress' | 'image-convert' | 'credits';
 
 type TabProps = { balance: number | null; onGoToCredits: () => void };
 
@@ -54,6 +54,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
     id: 'video-convert',
     label: 'Video Converter',
     icon: 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z',
+  },
+  {
+    id: 'video-to-gif',
+    label: 'Video to GIF',
+    icon: 'M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   },
   {
     id: 'image-compress',
@@ -894,8 +899,386 @@ function VideoConvertTab({ balance, onGoToCredits }: TabProps) {
   );
 }
 
+// ── Video to GIF tab ───────────────────────────────────────────────────────────
+type GifQuality = 'high' | 'balanced' | 'small';
+
+const GIF_FPS_OPTIONS = [5, 10, 15, 20, 24];
+
+const GIF_WIDTH_OPTIONS: { value: string; label: string }[] = [
+  { value: '320',      label: '320 px (tiny, chat-friendly)' },
+  { value: '480',      label: '480 px (default)' },
+  { value: '640',      label: '640 px' },
+  { value: '800',      label: '800 px' },
+  { value: 'original', label: 'Original width (max 1280 px)' },
+];
+
+const GIF_QUALITY_OPTIONS: { value: GifQuality; label: string; desc: string }[] = [
+  { value: 'high',     label: 'High',     desc: 'Most colours, largest file' },
+  { value: 'balanced', label: 'Balanced', desc: 'Good look, moderate size' },
+  { value: 'small',    label: 'Small',    desc: 'Fewest colours, smallest file' },
+];
+
+const GIF_MIN_SECONDS = 0.5;
+const GIF_MAX_SECONDS = 30;
+
+function VideoToGifTab({ balance, onGoToCredits }: TabProps) {
+  const [dragging, setDragging] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [startTime, setStartTime] = useState('0');
+  const [clipLength, setClipLength] = useState('5');
+  const [fps, setFps] = useState(15);
+  const [width, setWidth] = useState('480');
+  const [quality, setQuality] = useState<GifQuality>('balanced');
+  const [loopForever, setLoopForever] = useState(true);
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState('');
+  const [result, setResult] = useState<{ originalSize: number; gifSize: number; url: string; name: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const VIDEO_TO_GIF_COST = 8;
+
+  // Free the preview blob whenever it is replaced, cleared, or the tab unmounts.
+  useEffect(() => {
+    return () => { if (result?.url) URL.revokeObjectURL(result.url); };
+  }, [result?.url]);
+
+  function pick(f: File | undefined) {
+    if (!f) return;
+    setFile(f);
+    setError('');
+    setResult(null);
+    setVideoDuration(null);
+
+    // Best-effort: read the length so we can validate the start time up front.
+    // Formats the browser can't decode (AVI, MKV...) simply won't report one.
+    const probeUrl = URL.createObjectURL(f);
+    const probe = document.createElement('video');
+    probe.preload = 'metadata';
+    probe.onloadedmetadata = () => {
+      if (Number.isFinite(probe.duration)) setVideoDuration(probe.duration);
+      URL.revokeObjectURL(probeUrl);
+    };
+    probe.onerror = () => URL.revokeObjectURL(probeUrl);
+    probe.src = probeUrl;
+  }
+
+  function clear() {
+    setFile(null);
+    setVideoDuration(null);
+    setError('');
+    setProgress('');
+    setResult(null);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    pick(e.dataTransfer.files[0]);
+  }
+
+  function validate(): string | null {
+    const start = Number(startTime);
+    const length = Number(clipLength);
+    if (!Number.isFinite(start) || start < 0) return 'Start time must be 0 or greater.';
+    if (!Number.isFinite(length) || length < GIF_MIN_SECONDS || length > GIF_MAX_SECONDS) {
+      return `Clip length must be between ${GIF_MIN_SECONDS} and ${GIF_MAX_SECONDS} seconds.`;
+    }
+    if (videoDuration !== null && start >= videoDuration) {
+      return `Start time is past the end of the video (${videoDuration.toFixed(1)}s long).`;
+    }
+    return null;
+  }
+
+  async function convert() {
+    if (!file) return;
+    if (balance !== null && balance < VIDEO_TO_GIF_COST) { onGoToCredits(); return; }
+
+    const invalid = validate();
+    if (invalid) { setError(invalid); return; }
+
+    setConverting(true);
+    setError('');
+    setResult(null);
+    setProgress('Uploading video...');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('startTime', startTime);
+      form.append('duration', clipLength);
+      form.append('fps', String(fps));
+      form.append('width', width);
+      form.append('quality', quality);
+      form.append('loop', loopForever ? 'infinite' : 'once');
+
+      setProgress('Creating GIF (this may take a moment)...');
+      const res = await authFetch('/api/video-to-gif', { method: 'POST', body: form });
+
+      if (res.status === 402) {
+        let reqCredits = VIDEO_TO_GIF_COST;
+        let bal = balance ?? 0;
+        try {
+          const d = JSON.parse(await res.text()) as { required: number; balance: number };
+          reqCredits = d.required ?? reqCredits;
+          bal = d.balance ?? bal;
+        } catch {
+          // ignore json parse failure
+        }
+        throw new Error(`Not enough credits. Need ${reqCredits}, you have ${bal}.`);
+      }
+
+      if (!res.ok) {
+        let msg = 'GIF conversion failed';
+        try {
+          const raw = await res.text();
+          try {
+            const errData = JSON.parse(raw);
+            msg = errData.error || errData.message || raw || msg;
+          } catch {
+            msg = raw || msg;
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(msg);
+      }
+
+      const originalSize = Number(res.headers.get('X-Original-Size') ?? file.size);
+      const blob = await res.blob();
+      const stem = file.name.replace(/\.[^.]+$/, '') || 'video';
+
+      setResult({
+        originalSize,
+        gifSize: Number(res.headers.get('X-Converted-Size') ?? 0) || blob.size,
+        url: URL.createObjectURL(blob),
+        name: `${stem}.gif`,
+      });
+      setProgress('Done!');
+      setTimeout(() => setProgress(''), 3500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'GIF conversion failed');
+      setProgress('');
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  const inputCls = 'w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-700 focus:outline-none focus:border-indigo-500';
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+      {/* Upload area */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Upload Video</h2>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            dragging
+              ? 'border-indigo-500 bg-indigo-50'
+              : 'border-gray-200 hover:border-gray-300 bg-gray-50/50'
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="video/*,.mp4,.mov,.webm,.mkv,.avi,.wmv,.flv,.m4v,.mpg,.mpeg,.3gp,.ogv,.ts,.mts,.m2ts"
+            className="hidden"
+            onChange={e => pick(e.target.files?.[0])}
+          />
+          {file ? (
+            <>
+              <svg className="w-10 h-10 text-green-500 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-semibold text-gray-800">{file.name}</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {formatBytes(file.size)}
+                {videoDuration !== null && ` · ${videoDuration.toFixed(1)}s`}
+              </p>
+              <button
+                onClick={e => { e.stopPropagation(); clear(); }}
+                className="mt-3 text-xs text-red-400 hover:text-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              <svg className="w-10 h-10 text-gray-300 mb-3 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.869A1 1 0 0121 8.054v7.892a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              </svg>
+              <p className="text-sm font-medium text-gray-600">Drop a video here, or <span className="text-indigo-500">browse</span></p>
+              <p className="text-xs text-gray-400 mt-1">MP4, MOV, WEBM, MKV, AVI and more (up to 500 MB)</p>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* GIF settings */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Clip</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Start (seconds)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Length (seconds)</label>
+              <input
+                type="number"
+                min={GIF_MIN_SECONDS}
+                max={GIF_MAX_SECONDS}
+                step={0.5}
+                value={clipLength}
+                onChange={e => setClipLength(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-2">
+            Up to {GIF_MAX_SECONDS} seconds per GIF. Longer or larger GIFs make much bigger files.
+          </p>
+        </div>
+
+        <div className="pt-4 border-t border-gray-100 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Frame rate</label>
+            <div className="grid grid-cols-5 gap-2">
+              {GIF_FPS_OPTIONS.map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setFps(n)}
+                  className={`py-2 rounded-lg border text-xs font-bold transition-colors ${
+                    fps === n
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                      : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300'
+                  }`}
+                >
+                  {n} fps
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Width</label>
+            <select value={width} onChange={e => setWidth(e.target.value)} className={inputCls}>
+              {GIF_WIDTH_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-400 mt-1">Height scales automatically. Videos are never enlarged.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Quality</label>
+            <div className="grid grid-cols-3 gap-2">
+              {GIF_QUALITY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setQuality(opt.value)}
+                  className={`p-2.5 rounded-lg border text-left transition-colors ${
+                    quality === opt.value
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-700'
+                      : 'bg-white border-gray-200 text-gray-700 hover:border-indigo-300'
+                  }`}
+                >
+                  <p className="text-xs font-bold">{opt.label}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={loopForever}
+              onChange={e => setLoopForever(e.target.checked)}
+              className="accent-indigo-500 rounded"
+            />
+            <span className="text-xs text-gray-700 font-medium">Loop forever</span>
+          </label>
+        </div>
+      </section>
+
+      {/* Credit cost & action button */}
+      <div className="space-y-2">
+        <div className={`text-xs text-center font-semibold rounded-lg px-3 py-1.5 border ${
+          balance !== null && balance < VIDEO_TO_GIF_COST
+            ? 'text-red-700 bg-red-50 border-red-200'
+            : 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        }`}>
+          Cost: {VIDEO_TO_GIF_COST} credits{balance !== null ? ` · Balance: ${balance}` : ''}
+        </div>
+
+        {balance !== null && balance < VIDEO_TO_GIF_COST ? (
+          <button onClick={onGoToCredits} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3.5 rounded-xl text-sm transition-colors">
+            Buy Credits (need {VIDEO_TO_GIF_COST - balance} more)
+          </button>
+        ) : (
+          <button
+            onClick={convert}
+            disabled={!file || converting}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {converting && (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            )}
+            {converting ? progress || 'Creating GIF...' : `Create GIF · ${VIDEO_TO_GIF_COST} credits`}
+          </button>
+        )}
+
+        {error && (
+          <p className="text-center text-xs text-red-500">{error}</p>
+        )}
+      </div>
+
+      {/* Result preview */}
+      {result && (
+        <section className="bg-white rounded-xl border border-green-200 p-6 space-y-4">
+          <div className="text-center space-y-1">
+            <p className="text-xs text-green-700 font-bold">✓ GIF created!</p>
+            <p className="text-xs text-green-600">
+              {formatBytes(result.originalSize)} video → {formatBytes(result.gifSize)} GIF
+            </p>
+          </div>
+          <div className="flex justify-center bg-gray-50 rounded-lg p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={result.url} alt="Generated GIF preview" className="max-w-full max-h-96 rounded" />
+          </div>
+          <a
+            href={result.url}
+            download={result.name}
+            className="block w-full text-center bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+          >
+            Download {result.name}
+          </a>
+        </section>
+      )}
+    </div>
+  );
+}
+
 // ── Image Compress tab ─────────────────────────────────────────────────────────
-type ImageFormat = 'original' | 'jpeg' | 'png' | 'webp' | 'avif';
+type ImageFormat ='original' | 'jpeg' | 'png' | 'webp' | 'avif';
 
 const IMAGE_QUALITY_OPTIONS: { value: QualityTier; label: string; desc: string }[] = [
   { value: 'high', label: 'High Quality', desc: 'Original size' },
@@ -2673,6 +3056,7 @@ export default function AppPage() {
           {activeTab === 'youtube' && <YoutubeTab {...tabProps} />}
           {activeTab === 'video-compress' && <VideoCompressTab {...tabProps} />}
           {activeTab === 'video-convert' && <VideoConvertTab {...tabProps} />}
+          {activeTab === 'video-to-gif' && <VideoToGifTab {...tabProps} />}
           {activeTab === 'image-compress' && <ImageCompressTab {...tabProps} />}
           {activeTab === 'image-convert' && <ImageConvertTab {...tabProps} />}
           {activeTab === 'credits' && <CreditsTab balance={balance} onBalanceRefresh={refreshBalance} />}

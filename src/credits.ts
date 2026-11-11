@@ -10,6 +10,7 @@ export const CREDIT_COSTS = {
   image_compress: 3,
   image_convert:  3,
   video_convert:  10,
+  video_to_gif:   8,
 } as const;
 
 export type CreditKind = keyof typeof CREDIT_COSTS | 'purchase' | 'refund';
